@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y \
 # ============================================
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs python3 make g++ \
-    && npm install -g pnpm \
+    && npm install -g pnpm node-gyp \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================
@@ -75,10 +75,13 @@ WORKDIR /opt/agent-server
 COPY agent-server/dist ./dist
 COPY agent-server/drizzle ./drizzle
 COPY agent-server/package.json ./
-# Install and rebuild native modules
-ENV PNPM_ENABLE_PRE_POST_SCRIPTS=true
-RUN pnpm install --prod && \
-    cd node_modules/better-sqlite3 && npm run build-release
+# Install dependencies (skip native module builds initially)
+RUN pnpm install --prod --ignore-scripts
+
+# Rebuild native modules with global node-gyp (fixes Node.js v22 compatibility)
+ENV npm_config_node_gyp=/usr/lib/node_modules/node-gyp/bin/node-gyp.js
+RUN cd node_modules/better-sqlite3 && node-gyp rebuild --release
+RUN cd node_modules/usocket && node-gyp rebuild --release || true
 
 # ============================================
 # Data directory for SQLite

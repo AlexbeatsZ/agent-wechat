@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { createClient, createSubscriptionClient, Client, ClientOptions } from "./lib/client.js";
 import { spawn, execSync } from "child_process";
 import fs from "fs";
@@ -197,9 +197,13 @@ program
 program
   .command("a11y")
   .description("Dump accessibility tree")
-  .argument("[scope]", "Scope: chats|messages|buttons|full|desktop", "full")
-  .action(async (scope: string) => {
-    await cmdA11y(getClient(), scope as "chats" | "messages" | "buttons" | "full");
+  .addOption(
+    new Option("-f, --format <format>", "Output format")
+      .choices(["json", "aria"])
+      .default("json")
+  )
+  .action(async (options: { format: "json" | "aria" }) => {
+    await cmdA11y(getClient(), options.format);
   });
 
 // ============================================
@@ -358,12 +362,17 @@ async function cmdScreenshot(client: Client, outputPath: string) {
   console.log(`Screenshot saved to ${outputPath}`);
 }
 
-async function cmdA11y(client: Client, scope: "chats" | "messages" | "buttons" | "full") {
-  const result = await client.debug.a11y.query({ scope });
+async function cmdA11y(client: Client, format: "json" | "aria") {
+  const result = await client.debug.a11y.query({ format });
   if (result.error) {
     console.error(`Error: ${result.error}`);
+    return;
   }
-  console.log(JSON.stringify(result.items, null, 2));
+  if (format === "aria" && result.aria) {
+    console.log(result.aria);
+  } else if (result.tree) {
+    console.log(JSON.stringify(result.tree, null, 2));
+  }
 }
 
 // ============================================

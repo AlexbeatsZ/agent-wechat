@@ -26,6 +26,7 @@
     "@thisnick/agent-wechat-shared": "workspace:*",
     "@trpc/server": "^11.0.0",
     "better-sqlite3": "^11.8.1",
+    "dbus-next": "^0.10.2",
     "drizzle-orm": "^0.45.1",
     "jsqr": "^1.4.0",
     "pngjs": "^7.0.0",

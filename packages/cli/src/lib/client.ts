@@ -41,7 +41,7 @@ export interface Client {
   };
   debug: {
     screenshot: { query: () => Promise<{ base64: string }> };
-    a11y: { query: (input: { scope: "chats" | "messages" | "buttons" | "full" | "desktop" }) => Promise<{ items: unknown[]; error?: string }> };
+    a11y: { query: (input: { format: "json" | "aria" }) => Promise<{ tree: unknown; aria: string | null; error?: string }> };
   };
   sessions: {
     create: { mutate: (input: { name: string }) => Promise<Session> };

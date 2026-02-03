@@ -1,4 +1,8 @@
 import { execCommand, type ExecOptions } from "./exec.js";
+import { getA11yTreeViaDBus } from "./dbus/a11y.js";
+
+// Use DBus-based implementation by default, with Python fallback
+const USE_DBUS_A11Y = process.env.A11Y_USE_DBUS !== "false";
 
 export interface A11yProbeResult {
   loggedIn: boolean;
@@ -221,11 +225,32 @@ function addParentRefs(node: A11yNode, parent?: A11yNode): void {
 /**
  * Get the desktop accessibility tree as a nested structure.
  * Compatible with CSS-like selectors (querySelector).
+ *
+ * Uses dbus-next by default, with Python fallback if A11Y_USE_DBUS=false.
+ *
+ * @param options - Options including session for multi-session support
  */
 export async function getA11yDesktop(options?: ExecOptions): Promise<{
   tree: A11yNode | null;
   error?: string;
 }> {
+  // Extract dbusAddress from session if provided
+  const dbusAddress = options?.session?.dbusAddress;
+
+  // Try dbus-next implementation first (if enabled)
+  if (USE_DBUS_A11Y) {
+    try {
+      const tree = await getA11yTreeViaDBus(dbusAddress);
+      if (tree) {
+        return { tree, error: undefined };
+      }
+      // Fall through to Python if dbus returns null
+    } catch (err) {
+      console.warn("[A11y] DBus implementation failed, falling back to Python:", err);
+    }
+  }
+
+  // Python fallback
   const result = await execCommand("python3", [
     A11Y_SCRIPT_PATH,
     "--format",

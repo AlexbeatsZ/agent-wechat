@@ -6,6 +6,8 @@ import { getAppRouter } from "./router/index.js";
 import { createContext } from "./router/context.js";
 import { initDb } from "./db/index.js";
 import { initializeSessions } from "./sessions/manager.js";
+import { closeSessionBus } from "./lib/dbus/index.js";
+import { closeA11yBus } from "./lib/dbus/a11y.js";
 
 const PORT = parseInt(process.env.AGENT_PORT || "6174", 10);
 const HOST = process.env.AGENT_HOST || "0.0.0.0";
@@ -75,6 +77,11 @@ async function main() {
   // Handle shutdown
   const shutdown = () => {
     console.log("Shutting down...");
+
+    // Close DBus connections
+    closeSessionBus();
+    closeA11yBus();
+
     wss.close();
     server.close(() => {
       console.log("Server closed");
