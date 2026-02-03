@@ -32,6 +32,7 @@ export const effectWatchers: EffectWatcher[] = [
     prev.mainWindow.view.startsWith("login")
       ? [{ type: "emit", event: { type: "login_success" } }]
       : [],
+
 ];
 
 /**

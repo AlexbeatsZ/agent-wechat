@@ -70,8 +70,10 @@ export function parseChat(item: A11yNode): Chat {
     }
   }
 
+  const stableKey = name || raw;
+
   return {
-    id: `chat_${hashString(raw)}`,
+    id: `chat_${hashString(stableKey)}`,
     name,
     unreadCount,
     lastMessagePreview,

@@ -197,6 +197,17 @@ pnpm build:image:amd64        # Build Docker image (Intel)
 ## Environment Variables
 
 - `AGENT_WECHAT_URL` - Override server URL (default: http://localhost:6174)
+- `AGENT_DB_PATH` - Override SQLite DB path (default: /data/agent.db)
+
+## Migrations (Drizzle)
+
+- Migrations live in `packages/agent-server/drizzle/`
+- On startup, `initDb()` runs Drizzle migrations if present.
+- If an existing DB has tables but no migration history, the baseline migration is recorded as applied.
+- Generate new migrations:
+  ```bash
+  pnpm --filter @thisnick/agent-wechat-server run db:generate -- --name <name>
+  ```
 
 ## Key Design Decisions
 

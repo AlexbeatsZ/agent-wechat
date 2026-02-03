@@ -45,33 +45,76 @@ async function executeEffect<TParams>(
       }
       break;
     }
-    case "dbWrite":
-      // TODO: Implement db write if needed
-      break;
   }
 }
 
 /**
  * Extract debug info from a11y tree for logging unknown states.
  */
-function extractDebugInfo(node: A11yNode): { buttons: string[]; labels: string[]; frames: string[] } {
+function extractDebugInfo(node: A11yNode): {
+  buttons: string[];
+  labels: string[];
+  frames: string[];
+  lists: string[];
+  texts: string[];
+  topRoles: { role: string; count: number }[];
+  sampleNodes: { depth: number; role: string; name: string; bounds?: A11yNode["bounds"] }[];
+  totalNodes: number;
+} {
   const buttons: string[] = [];
   const labels: string[] = [];
   const frames: string[] = [];
+  const lists: string[] = [];
+  const texts: string[] = [];
+  const roleCounts: Record<string, number> = {};
+  const sampleNodes: { depth: number; role: string; name: string; bounds?: A11yNode["bounds"] }[] = [];
+  let totalNodes = 0;
 
-  function walk(n: A11yNode) {
+  function walk(n: A11yNode, depth: number) {
+    totalNodes += 1;
+    roleCounts[n.role] = (roleCounts[n.role] ?? 0) + 1;
+
+    if (sampleNodes.length < 30) {
+      sampleNodes.push({
+        depth,
+        role: n.role,
+        name: n.name,
+        bounds: n.bounds,
+      });
+    }
+
     if (n.role === "push-button" && n.name) {
       buttons.push(n.name);
     } else if (n.role === "label" && n.name) {
       labels.push(n.name);
     } else if (n.role === "frame" && n.name) {
       frames.push(n.name);
+    } else if (n.role === "list" && n.name) {
+      lists.push(n.name);
+    } else if (n.role === "text" && n.name) {
+      texts.push(n.name);
     }
-    n.children?.forEach(walk);
+
+    n.children?.forEach((child) => walk(child, depth + 1));
   }
 
-  walk(node);
-  return { buttons: buttons.slice(0, 10), labels: labels.slice(0, 10), frames };
+  walk(node, 0);
+
+  const topRoles = Object.entries(roleCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([role, count]) => ({ role, count }));
+
+  return {
+    buttons: buttons.slice(0, 10),
+    labels: labels.slice(0, 10),
+    frames: frames.slice(0, 10),
+    lists: lists.slice(0, 10),
+    texts: texts.slice(0, 10),
+    topRoles,
+    sampleNodes,
+    totalNodes,
+  };
 }
 
 /**

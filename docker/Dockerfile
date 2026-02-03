@@ -73,6 +73,7 @@ RUN pnpm install --prod
 # ============================================
 WORKDIR /opt/agent-server
 COPY agent-server/dist ./dist
+COPY agent-server/drizzle ./drizzle
 COPY agent-server/package.json ./
 # Install and rebuild native modules
 ENV PNPM_ENABLE_PRE_POST_SCRIPTS=true

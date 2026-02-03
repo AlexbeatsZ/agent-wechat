@@ -29,6 +29,7 @@ MONOREPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Paths to mount
 AGENT_SERVER_DIST="$MONOREPO_ROOT/packages/agent-server/dist"
+AGENT_SERVER_DRIZZLE="$MONOREPO_ROOT/packages/agent-server/drizzle"
 SHARED_DIST="$MONOREPO_ROOT/packages/shared/dist"
 DOCKER_TOOLS="$MONOREPO_ROOT/docker/tools"
 
@@ -51,6 +52,7 @@ fi
 
 echo "Starting $CONTAINER_NAME in dev mode..."
 echo "  Mounting: $AGENT_SERVER_DIST"
+echo "  Mounting: $AGENT_SERVER_DRIZZLE"
 echo "  Mounting: $SHARED_DIST"
 echo "  Mounting: $DOCKER_TOOLS"
 
@@ -62,6 +64,7 @@ docker run -d \
   -p "$DEBUG_PORT:$DEBUG_PORT" \
   -v "$CONTAINER_NAME-data:/data" \
   -v "$AGENT_SERVER_DIST:/opt/agent-server/dist" \
+  -v "$AGENT_SERVER_DRIZZLE:/opt/agent-server/drizzle" \
   -v "$SHARED_DIST:/opt/shared/dist" \
   -v "$DOCKER_TOOLS:/opt/tools" \
   -e "NODE_OPTIONS=--inspect=0.0.0.0:$DEBUG_PORT" \
