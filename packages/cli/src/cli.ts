@@ -144,12 +144,33 @@ program
     await cmdLogin(getClientOptions(), timeoutMs, opts.new ?? false);
   });
 
-program
+// ============================================
+// Chats Commands
+// ============================================
+
+const chatsCmd = program
   .command("chats")
-  .description("List chats")
-  .argument("[limit]", "Maximum number of chats to show")
-  .action(async (limit?: string) => {
-    await cmdChats(getClient(), limit ? parseInt(limit, 10) : undefined);
+  .description("Chat management commands");
+
+chatsCmd
+  .command("list")
+  .description("List chats from database")
+  .option("-l, --limit <number>", "Maximum number of chats", "50")
+  .option("-u, --unread", "Show only unread chats")
+  .option("-j, --json", "Output as JSON")
+  .action(async (opts) => {
+    await cmdChats(getClient(), parseInt(opts.limit, 10), opts.unread ?? false, opts.json ?? false);
+  });
+
+chatsCmd
+  .command("sync")
+  .description("Sync chat list from WeChat UI")
+  .option("-m, --max-chats <number>", "Maximum chats to sync", "20")
+  .option("-t, --timeout <seconds>", "Timeout in seconds", "300")
+  .action(async (opts) => {
+    const maxChats = parseInt(opts.maxChats, 10);
+    const timeoutMs = parseInt(opts.timeout, 10) * 1000;
+    await cmdChatSync(getClientOptions(), maxChats, timeoutMs);
   });
 
 program
@@ -289,18 +310,82 @@ async function cmdLogin(options: ClientOptions, timeoutMs: number = 300_000, new
   }
 }
 
-async function cmdChats(client: Client, limit?: number) {
-  const chats = await client.chats.list.query({ limit });
-  if (chats.length === 0) {
-    console.log("No chats found. Try syncing first.");
+async function cmdChats(client: Client, limit: number = 50, unreadOnly: boolean = false, json: boolean = false) {
+  const chats = await client.chats.list.query({ limit, unreadOnly });
+
+  if (json) {
+    console.log(JSON.stringify(chats, null, 2));
     return;
   }
 
-  console.log(`Found ${chats.length} chats:\n`);
+  if (chats.length === 0) {
+    console.log("No chats found. Try syncing first with: pnpm cli chats sync");
+    return;
+  }
+
+  console.log(`Found ${chats.length} chat(s):\n`);
+  console.log("ID                                    Unread  Group  Name");
+  console.log("-".repeat(80));
   for (const chat of chats) {
-    const unread = chat.unreadCount > 0 ? ` [${chat.unreadCount} unread]` : "";
-    const preview = chat.lastMessagePreview ? ` - ${chat.lastMessagePreview.slice(0, 30)}...` : "";
-    console.log(`  ${chat.id}: ${chat.name}${unread}${preview}`);
+    const unread = chat.unreadCount > 0 ? String(chat.unreadCount).padStart(2) : "  ";
+    const group = chat.isGroup ? "  Y  " : "     ";
+    console.log(`${chat.id}  ${unread}    ${group}  ${chat.name}`);
+  }
+}
+
+async function cmdChatSync(options: ClientOptions, maxChats: number = 20, timeoutMs: number = 300_000) {
+  console.log(`Syncing chat list (max ${maxChats} chats)...\n`);
+
+  const { client, close } = createSubscriptionClient(options);
+  let subscription: { unsubscribe: () => void } | null = null;
+
+  // Handle Ctrl+C to abort subscription
+  const abortHandler = () => {
+    console.log("\n\nSync cancelled.");
+    if (subscription) {
+      subscription.unsubscribe();
+    }
+    close();
+    process.exit(0);
+  };
+  process.on("SIGINT", abortHandler);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      subscription = client.chats.syncSubscription.subscribe(
+        { maxChats, timeoutMs },
+        {
+          onData: (event) => {
+            switch (event.type) {
+              case "status":
+                console.log(`Status: ${event.message}`);
+                break;
+              case "sync_progress":
+                console.log(`Progress: ${event.processedCount} chats processed`);
+                break;
+              case "sync_complete":
+                console.log(`\nSync complete! ${event.count} chats in database.`);
+                resolve();
+                break;
+              case "error":
+                console.error(`\nError: ${event.message}`);
+                reject(new Error(event.message));
+                break;
+            }
+          },
+          onError: (err) => {
+            console.error("\nConnection error:", err.message);
+            reject(err);
+          },
+          onComplete: () => {
+            // Subscription completed normally
+          },
+        }
+      );
+    });
+  } finally {
+    process.removeListener("SIGINT", abortHandler);
+    close();
   }
 }
 

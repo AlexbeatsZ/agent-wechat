@@ -1,7 +1,7 @@
 import type { IAState, FrameIdentifyMetadata } from "../types.js";
 import { querySelector, findAncestor } from "../selectors.js";
 import { decodeQrFromBase64Sync, decodeQrFullSync } from "../../lib/qr.js";
-import { windowControlCommands, extractWindowControlBounds } from "./base.js";
+import { extractWindowControlBounds } from "./base.js";
 
 /**
  * Login QR state - WeChat shows a QR code to scan.
@@ -45,11 +45,6 @@ export const loginQrState: IAState<FrameIdentifyMetadata> = {
       },
     };
   },
-
-  commands: {
-    wait: { type: "wait", ms: 1000 },
-    ...windowControlCommands,
-  },
 };
 
 /**
@@ -85,12 +80,6 @@ export const loginAccountState: IAState<FrameIdentifyMetadata> = {
       },
     };
   },
-
-  commands: {
-    click_login: { type: "click", selector: 'push-button[name="Log In"]' },
-    click_switch_account: { type: "click", selector: 'push-button[name="Switch Account"]' },
-    ...windowControlCommands,
-  },
 };
 
 /**
@@ -119,11 +108,6 @@ export const loginPhoneConfirmState: IAState<FrameIdentifyMetadata> = {
         ...windowBounds,
       },
     };
-  },
-
-  commands: {
-    wait: { type: "wait", ms: 1000 },
-    ...windowControlCommands,
   },
 };
 
@@ -176,11 +160,6 @@ export const loginLoadingState: IAState<FrameIdentifyMetadata> = {
       },
     };
   },
-
-  commands: {
-    wait: { type: "wait", ms: 500 },
-    ...windowControlCommands,
-  },
 };
 
 export const loginStates: IAState<FrameIdentifyMetadata>[] = [
@@ -189,3 +168,5 @@ export const loginStates: IAState<FrameIdentifyMetadata>[] = [
   loginPhoneConfirmState,
   loginLoadingState,
 ];
+
+export type LoginState = typeof loginQrState | typeof loginAccountState | typeof loginPhoneConfirmState | typeof loginLoadingState;

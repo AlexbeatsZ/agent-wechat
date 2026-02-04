@@ -11,6 +11,7 @@ import type {
   Session,
   DownloadAttachmentResult,
   LoginSubscriptionEvent,
+  SyncSubscriptionEvent,
 } from "@thisnick/agent-wechat-shared";
 
 export interface ClientOptions {
@@ -28,7 +29,7 @@ export interface Client {
     login: { mutate: () => Promise<LoginResult> };
   };
   chats: {
-    list: { query: (input: { limit?: number }) => Promise<Chat[]> };
+    list: { query: (input: { limit?: number; unreadOnly?: boolean }) => Promise<Chat[]> };
     get: { query: (input: { id: string }) => Promise<Chat | null> };
     find: { query: (input: { name: string }) => Promise<Chat[]> };
     open: { mutate: (input: { id: string }) => Promise<void> };
@@ -91,6 +92,18 @@ export interface SubscriptionClient {
         input: { timeoutMs?: number; newAccount?: boolean },
         callbacks: {
           onData: (event: LoginSubscriptionEvent) => void;
+          onError?: (err: Error) => void;
+          onComplete?: () => void;
+        }
+      ) => { unsubscribe: () => void };
+    };
+  };
+  chats: {
+    syncSubscription: {
+      subscribe: (
+        input: { maxChats?: number; timeoutMs?: number },
+        callbacks: {
+          onData: (event: SyncSubscriptionEvent) => void;
           onError?: (err: Error) => void;
           onComplete?: () => void;
         }

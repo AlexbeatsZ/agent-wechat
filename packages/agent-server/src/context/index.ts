@@ -1,6 +1,7 @@
-import type Database from "better-sqlite3";
+import type { DatabaseInstance } from "../db/index.js";
 import type { AppState, Context as IContext, Session } from "../ia/types.js";
 import { createDefaultAppState } from "../ia/types.js";
+import { sql } from "drizzle-orm";
 
 /**
  * Context manages the persistent FSM state.
@@ -14,7 +15,7 @@ export class Context implements IContext {
   constructor(
     public readonly sessionId: string,
     public readonly session: Session,
-    public readonly db: Database.Database
+    public readonly db: DatabaseInstance
   ) {
     this.state = createDefaultAppState();
   }
@@ -25,12 +26,12 @@ export class Context implements IContext {
    */
   async load(): Promise<void> {
     try {
-      const row = this.db
-        .prepare("SELECT app_state FROM context WHERE session_id = ?")
-        .get(this.sessionId) as { app_state: string } | undefined;
+      const rows = this.db.all<{ app_state: string }>(
+        sql`SELECT app_state FROM context WHERE session_id = ${this.sessionId}`
+      );
 
-      if (row?.app_state) {
-        const parsed = JSON.parse(row.app_state) as AppState;
+      if (rows.length > 0 && rows[0].app_state) {
+        const parsed = JSON.parse(rows[0].app_state) as AppState;
         this.state = parsed;
       }
     } catch {
@@ -47,17 +48,13 @@ export class Context implements IContext {
     try {
       const appStateJson = JSON.stringify(this.state);
 
-      this.db
-        .prepare(
-          `
-          INSERT INTO context (session_id, app_state, updated_at)
-          VALUES (?, ?, datetime('now'))
-          ON CONFLICT(session_id) DO UPDATE SET
-            app_state = excluded.app_state,
-            updated_at = datetime('now')
-        `
-        )
-        .run(this.sessionId, appStateJson);
+      this.db.run(sql`
+        INSERT INTO context (session_id, app_state, updated_at)
+        VALUES (${this.sessionId}, ${appStateJson}, datetime('now'))
+        ON CONFLICT(session_id) DO UPDATE SET
+          app_state = excluded.app_state,
+          updated_at = datetime('now')
+      `);
     } catch {
       // Ignore save errors - best effort
     }
@@ -72,7 +69,7 @@ export class Context implements IContext {
  */
 export async function createContext(
   session: Session,
-  db: Database.Database
+  db: DatabaseInstance
 ): Promise<Context> {
   const context = new Context(session.id, session, db);
   await context.load();

@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type Database from "better-sqlite3";
+import type { DatabaseInstance } from "../db/index.js";
 import type { Session } from "@thisnick/agent-wechat-shared";
 
 // Re-export Session from shared
@@ -29,6 +29,7 @@ export interface A11yNode {
   children?: A11yNode[];
   parent?: A11yNode;
   window?: A11yWindowInfo; // Present on frame nodes
+  states?: string[]; // AT-SPI states: FOCUSED, SELECTED, etc.
 }
 
 // ============================================
@@ -52,7 +53,8 @@ export interface SubscriptionEvent {
 }
 
 export type Action =
-  | { type: "click"; selector: Selector }
+  | { type: "click"; selector: Selector; x?: never; y?: never }
+  | { type: "click"; x: number; y: number; selector?: never }
   | { type: "type"; text: string; selector?: Selector }
   | { type: "key"; combo: string }
   | {
@@ -95,11 +97,30 @@ export type MainWindowView =
   | "login_account"
   | "login_phone_confirm"
   | "login_loading"
-  | "chat";
+  | "chat"
+  | "chat_open";
 
 export interface SearchResult {
   name: string;
   bounds?: Bounds;
+}
+
+/**
+ * Visible chat in the list (from a11y + image matching)
+ */
+export interface VisibleChat {
+  id: string;
+  name: string;
+  imageHash: string | null;
+  bounds?: Bounds;
+  unreadCount: number;
+  time?: string;
+  pinned: boolean;
+  muted: boolean;
+  preview?: string;
+  sender?: string;  // If present, indicates group chat
+  matchConfidence: "name_unique" | "name_and_image" | "image_only" | "new";
+  shouldUpdateName: boolean;
 }
 
 export interface MainWindowState {
@@ -110,10 +131,23 @@ export interface MainWindowState {
   qrBinaryData?: number[];
   accountName?: string;
 
-  // Chat-specific (when view === 'chat')
+  // Chat-specific (when view === 'chat' or 'chat_open')
   selectedChatId?: string;
   searchQuery?: string;
   searchResults?: SearchResult[];
+
+  // Chat list sync (populated during reduce)
+  visibleChats?: VisibleChat[];
+
+  // Chat selection tracking (from a11y states)
+  focusedChatIndex?: number;
+  focusedChatName?: string;  // For skip detection in plan
+
+  // Chat open specific (when view === 'chat_open')
+  openedChatName?: string;
+  openedChatIsGroup?: boolean;
+  openedChatImageHash?: string;  // Avatar hash for identity (undefined if placeholder)
+  selectedChatBounds?: Bounds;
 
   // Window control bounds (captured from frame's toolbar)
   closeButtonBounds?: Bounds;
@@ -162,12 +196,9 @@ export interface ReduceArgs<TMetadata = unknown> {
   action: Action | null;
   a11y: A11yNode;
   screenshot: Buffer;
-  db: Database.Database;
+  db: DatabaseInstance;
   metadata?: TMetadata;
 }
-
-// Action template: can be a static action or a function that takes params
-export type ActionTemplate = Action | ((params: ActionParams) => Action);
 
 /**
  * IAState defines a UI state in the FSM.
@@ -179,7 +210,6 @@ export interface IAState<TMetadata = unknown> {
   id: string;
   identify: (args: IdentifyArgs) => IdentifyResult<TMetadata>;
   reduce: (args: ReduceArgs<TMetadata>) => AppState;
-  commands?: Record<string, ActionTemplate>;
 }
 
 // ============================================
@@ -193,6 +223,7 @@ export type Effect =
 export interface EffectWatcherArgs {
   prev: AppState;
   next: AppState;
+  db: DatabaseInstance;
 }
 
 export type EffectWatcher = (args: EffectWatcherArgs) => Effect[];
@@ -205,7 +236,7 @@ export type EffectWatcher = (args: EffectWatcherArgs) => Effect[];
 export interface Context {
   sessionId: string;
   session: Session;
-  db: Database.Database;
+  db: DatabaseInstance;
   state: AppState;
   save(): Promise<void>;
   load(): Promise<void>;
@@ -215,18 +246,41 @@ export interface Context {
 // Plan
 // ============================================
 
-export interface PlanArgs<TParams extends ActionParams = ActionParams> {
-  state: AppState;
-  params: TParams;
-  db: Database.Database;
+// Forward declaration - actual interface is in ia/index.ts
+// This avoids circular dependencies
+export interface IdentifiedStatesRef {
+  mainWindow: { state: IAState; metadata?: unknown } | null;
+  popup: { state: IAState; metadata?: unknown } | null;
 }
 
-export interface Plan<TParams extends ActionParams = ActionParams> {
+export interface PlanArgs<TParams extends ActionParams = ActionParams, TPlanState = unknown> {
+  state: AppState;
+  params: TParams;
+  db: DatabaseInstance;
+  a11y: A11yNode;
+  identified: IdentifiedStatesRef;
+  /** Plan-local state - mutable, lives only during execution */
+  planState: TPlanState;
+}
+
+/**
+ * Result from selectAction - bundles the action with its target metadata.
+ * The metadata contains the frame reference for scoped execution.
+ */
+export interface SelectedAction {
+  action: Action;
+  metadata?: unknown;
+}
+
+export interface Plan<TParams extends ActionParams = ActionParams, TPlanState = unknown> {
   id: string;
   description: string;
   params: z.ZodSchema<TParams>;
-  isGoalReached: (args: PlanArgs<TParams>) => boolean;
-  selectAction: (args: PlanArgs<TParams>) => string | null;
+  /** Initial plan-local state - called once when execution starts */
+  initialPlanState?: () => TPlanState;
+  isGoalReached: (args: Omit<PlanArgs<TParams, TPlanState>, "a11y" | "identified">) => boolean;
+  /** Returns SelectedAction with action + metadata (or null if no action needed) */
+  selectAction: (args: PlanArgs<TParams, TPlanState>) => SelectedAction | null;
 }
 
 // ============================================
@@ -235,9 +289,9 @@ export interface Plan<TParams extends ActionParams = ActionParams> {
 
 export type ExecutionStatus = "running" | "succeeded" | "failed" | "aborted";
 
-export interface Execution<TParams = unknown> {
+export interface Execution<TParams = unknown, TPlanState = unknown> {
   id: string;
-  plan: Plan<TParams & ActionParams>;
+  plan: Plan<TParams & ActionParams, TPlanState>;
   params: TParams;
   context: Context;
   status: ExecutionStatus;
@@ -246,6 +300,8 @@ export interface Execution<TParams = unknown> {
   error?: string;
   abortSignal: AbortSignal;
   emit: (event: SubscriptionEvent) => void;
+  /** Plan-local state - not persisted, lives only during execution */
+  planState: TPlanState;
 }
 
 // ============================================

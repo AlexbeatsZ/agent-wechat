@@ -43,6 +43,32 @@ def get_bounds(node):
         return None
 
 
+def get_states(node):
+    """Get accessible states as a list of state names."""
+    try:
+        state_set = node.get_state_set()
+        if not state_set:
+            return None
+        # Get all active states
+        states = state_set.get_states()
+        if not states:
+            return None
+        # Convert to readable names using value_name attribute
+        # value_name gives "ATSPI_STATE_SELECTED" -> strip prefix and uppercase
+        state_names = []
+        for s in states:
+            name = s.value_name.upper().replace("ATSPI_STATE_", "")
+            state_names.append(name)
+        # Filter to useful states (skip common ones like ENABLED, SHOWING, VISIBLE)
+        useful_states = [s for s in state_names if s in (
+            "FOCUSED", "SELECTED", "CHECKED", "PRESSED", "EXPANDED",
+            "COLLAPSED", "ACTIVE", "ARMED", "BUSY", "EDITABLE"
+        )]
+        return useful_states if useful_states else None
+    except Exception:
+        return None
+
+
 def get_window_info(node):
     """Get window-related info for frame nodes (PID, attributes)."""
     info = {}
@@ -105,6 +131,11 @@ def dump_tree_nested(max_depth=30):
             if bounds:
                 result["bounds"] = bounds
 
+            # Add states (FOCUSED, SELECTED, etc.)
+            states = get_states(node)
+            if states:
+                result["states"] = states
+
             # Add window info for frame nodes (useful for xdotool)
             if role == "frame":
                 window_info = get_window_info(node)
@@ -139,6 +170,11 @@ def dump_tree_aria(max_depth=30):
             return ""
         return f"@({bounds['x']},{bounds['y']} {bounds['width']}x{bounds['height']})"
 
+    def format_states(states):
+        if not states:
+            return ""
+        return f"[{','.join(states)}]"
+
     def walk(node, depth=0):
         if depth > max_depth or not node:
             return
@@ -146,6 +182,7 @@ def dump_tree_aria(max_depth=30):
             role = node.get_role_name().replace(" ", "-")
             name = node.get_name() or ""
             bounds = get_bounds(node)
+            states = get_states(node)
 
             # Skip elements with no bounds unless top-level
             if depth > 1 and bounds is None:
@@ -155,10 +192,11 @@ def dump_tree_aria(max_depth=30):
             else:
                 indent = "  " * depth
                 bounds_str = format_bounds(bounds)
+                states_str = format_states(states)
                 if name:
-                    lines.append(f"{indent}- {role} \"{name}\" {bounds_str}".rstrip())
+                    lines.append(f"{indent}- {role} \"{name}\" {states_str} {bounds_str}".rstrip())
                 else:
-                    lines.append(f"{indent}- {role} {bounds_str}".rstrip())
+                    lines.append(f"{indent}- {role} {states_str} {bounds_str}".rstrip())
 
             for i in range(node.get_child_count()):
                 walk(node.get_child_at_index(i), depth + 1)

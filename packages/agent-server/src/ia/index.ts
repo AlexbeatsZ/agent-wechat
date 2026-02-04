@@ -21,15 +21,20 @@ export const allStates: IAState<any>[] = [
 ];
 
 /**
+ * An identified state bundled with its metadata.
+ */
+export interface IdentifiedState<TMetadata = unknown> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  state: IAState<any>;
+  metadata?: TMetadata;
+}
+
+/**
  * Result from identifyStates, including metadata from identify functions.
  */
 export interface IdentifiedStates {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  mainWindow: IAState<any> | null;
-  mainWindowMetadata?: unknown;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  popup: IAState<any> | null;
-  popupMetadata?: unknown;
+  mainWindow: IdentifiedState | null;
+  popup: IdentifiedState | null;
 }
 
 /**
@@ -43,12 +48,8 @@ export function identifyStates(
   a11yTree: A11yNode,
   screenshot: string
 ): IdentifiedStates {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mainWindow: IAState<any> | null = null;
-  let mainWindowMetadata: unknown = undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let popup: IAState<any> | null = null;
-  let popupMetadata: unknown = undefined;
+  let mainWindow: IdentifiedState | null = null;
+  let popup: IdentifiedState | null = null;
 
   const args: IdentifyArgs = { a11y: a11yTree, screenshot };
 
@@ -57,11 +58,9 @@ export function identifyStates(
       const result = state.identify(args);
       if (result.identified) {
         if (state.fsm === "mainWindow" && !mainWindow) {
-          mainWindow = state;
-          mainWindowMetadata = result.metadata;
+          mainWindow = { state, metadata: result.metadata };
         } else if (state.fsm === "popup" && !popup) {
-          popup = state;
-          popupMetadata = result.metadata;
+          popup = { state, metadata: result.metadata };
         }
       }
     } catch {
@@ -72,5 +71,5 @@ export function identifyStates(
     if (mainWindow && popup) break;
   }
 
-  return { mainWindow, mainWindowMetadata, popup, popupMetadata };
+  return { mainWindow, popup };
 }

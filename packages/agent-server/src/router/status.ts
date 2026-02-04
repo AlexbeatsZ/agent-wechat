@@ -4,7 +4,7 @@ import { router, publicProcedure } from "./trpc.js";
 import { runA11yProbe } from "../lib/a11y.js";
 import { captureScreenshot } from "../lib/screenshot.js";
 import { decodeQrFromBase64, toDataURL } from "../lib/qr.js";
-import { getSqliteDb } from "../db/index.js";
+import { getDb } from "../db/index.js";
 import { createContext } from "../context/index.js";
 import { createExecution, runExecution } from "../execution/index.js";
 import { loginPlan } from "../plans/index.js";
@@ -146,11 +146,11 @@ export const statusRouter = router({
               return;
             }
 
-            // Get SQLite db for FSM context
-            const sqliteDb = getSqliteDb();
+            // Get drizzle db for FSM context
+            const db = getDb();
 
             // Create FSM context
-            const context = await createContext(session, sqliteDb);
+            const context = await createContext(session, db);
 
             // Create execution
             const execution = createExecution(

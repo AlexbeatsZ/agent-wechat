@@ -1,8 +1,9 @@
 import { execCommand, type ExecOptions } from "./exec.js";
 import { getA11yTreeViaDBus } from "./dbus/a11y.js";
 
-// Use DBus-based implementation by default, with Python fallback
-const USE_DBUS_A11Y = process.env.A11Y_USE_DBUS !== "false";
+// Use Python by default - DBus via usocket has native module issues
+// Set A11Y_USE_DBUS=true to try DBus (requires usocket to be compiled)
+const USE_DBUS_A11Y = process.env.A11Y_USE_DBUS === "true";
 
 export interface A11yProbeResult {
   loggedIn: boolean;
@@ -211,6 +212,7 @@ export interface A11yNode {
   };
   children?: A11yNode[];
   parent?: A11yNode;
+  states?: string[];  // AT-SPI states: FOCUSED, SELECTED, etc.
 }
 
 /**

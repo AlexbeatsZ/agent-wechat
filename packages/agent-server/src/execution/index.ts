@@ -1,9 +1,7 @@
 import type {
   Action,
   ActionParams,
-  ActionTemplate,
   A11yNode,
-  AppState,
   Context,
   Effect,
   Execution,
@@ -24,9 +22,9 @@ function sleep(ms: number): Promise<void> {
 /**
  * Execute an effect.
  */
-async function executeEffect<TParams>(
+async function executeEffect<TParams, TPlanState>(
   effect: Effect,
-  execution: Execution<TParams>
+  execution: Execution<TParams, TPlanState>
 ): Promise<void> {
   switch (effect.type) {
     case "emit": {
@@ -120,15 +118,15 @@ function extractDebugInfo(node: A11yNode): {
 /**
  * Create an Execution instance.
  */
-export function createExecution<TParams extends ActionParams>(
-  plan: Plan<TParams>,
+export function createExecution<TParams extends ActionParams, TPlanState = unknown>(
+  plan: Plan<TParams, TPlanState>,
   params: TParams,
   context: Context,
   options: {
     emit: (event: SubscriptionEvent) => void;
     abortSignal: AbortSignal;
   }
-): Execution<TParams> {
+): Execution<TParams, TPlanState> {
   return {
     id: crypto.randomUUID(),
     plan,
@@ -138,39 +136,8 @@ export function createExecution<TParams extends ActionParams>(
     stepCount: 0,
     abortSignal: options.abortSignal,
     emit: options.emit,
+    planState: plan.initialPlanState?.() ?? ({} as TPlanState),
   };
-}
-
-/**
- * Compute additional params needed by specific actions.
- *
- * For example, click_chat needs an index based on chatName.
- */
-function computeActionParams(
-  actionKey: string,
-  state: AppState,
-  params: ActionParams
-): ActionParams {
-  const result = { ...params };
-
-  switch (actionKey) {
-    case "click_search_result": {
-      // Find index of matching result
-      const results = state.mainWindow.searchResults ?? [];
-      const targetIndex = results.findIndex((r) =>
-        r.name.includes(params.chatName ?? "")
-      );
-      result.index = targetIndex >= 0 ? targetIndex : 0;
-      break;
-    }
-    case "type_search": {
-      // Use chatName as query
-      result.query = params.chatName;
-      break;
-    }
-  }
-
-  return result;
 }
 
 export interface ExecutionResult {
@@ -189,15 +156,24 @@ export interface ExecutionResult {
  * 5. Selects and executes an action
  * 6. Repeats
  */
-export async function runExecution<TParams extends ActionParams>(
-  execution: Execution<TParams>
+export async function runExecution<TParams extends ActionParams, TPlanState = unknown>(
+  execution: Execution<TParams, TPlanState>
 ): Promise<ExecutionResult> {
-  const maxSteps = 50;
-  const unknownStateTimeoutMs = 60000; // 1 minute
+  const executionTimeoutMs = 300000; // 5 minutes total execution timeout
+  const unknownStateTimeoutMs = 60000; // 1 minute for unknown states
+  const executionStartTime = Date.now();
   let unknownStateSince: number | null = null;
 
-  for (let step = 0; step < maxSteps; step++) {
+  for (let step = 0; ; step++) {
     execution.stepCount = step;
+
+    // Check execution timeout
+    const elapsedTotalMs = Date.now() - executionStartTime;
+    if (elapsedTotalMs > executionTimeoutMs) {
+      execution.status = "failed";
+      execution.error = `Execution timeout after ${Math.round(elapsedTotalMs / 1000)}s`;
+      return { success: false, error: execution.error };
+    }
 
     // Check abort signal
     if (execution.abortSignal.aborted) {
@@ -255,28 +231,28 @@ export async function runExecution<TParams extends ActionParams>(
     // Reset unknown state timer when we identify a state
     unknownStateSince = null;
 
-    console.log(`[FSM] Identified: mainWindow=${identified.mainWindow.id}, popup=${identified.popup?.id ?? "none"}`);
+    console.log(`[FSM] Identified: mainWindow=${identified.mainWindow.state.id}, popup=${identified.popup?.state.id ?? "none"}`);
 
     // 3. Reduce: Update app state via reducers (pass metadata from identify)
     const screenshotBuffer = Buffer.from(screenshot, "base64");
-    let newAppState = identified.mainWindow.reduce({
+    let newAppState = identified.mainWindow.state.reduce({
       prev: execution.context.state,
       action: execution.lastAction ?? null,
       a11y,
       screenshot: screenshotBuffer,
       db: execution.context.db,
-      metadata: identified.mainWindowMetadata,
+      metadata: identified.mainWindow.metadata,
     });
 
     // Run popup reducer if popup is present, otherwise clear popup
     if (identified.popup) {
-      newAppState = identified.popup.reduce({
+      newAppState = identified.popup.state.reduce({
         prev: newAppState,
         action: execution.lastAction ?? null,
         a11y,
         screenshot: screenshotBuffer,
         db: execution.context.db,
-        metadata: identified.popupMetadata,
+        metadata: identified.popup.metadata,
       });
     } else {
       newAppState = { ...newAppState, popup: null };
@@ -286,7 +262,7 @@ export async function runExecution<TParams extends ActionParams>(
     execution.context.state = newAppState;
 
     // 4. Run effects (reactive, 0..n based on state diff)
-    const effects = collectEffects(prevAppState, newAppState);
+    const effects = collectEffects(prevAppState, newAppState, execution.context.db);
     for (const effect of effects) {
       await executeEffect(effect, execution);
     }
@@ -294,51 +270,31 @@ export async function runExecution<TParams extends ActionParams>(
     // 5. Persist: Save context to DB
     await execution.context.save();
 
-    // 6. Select action: Plan returns action key
-    const actionKey = execution.plan.selectAction({
+    // 6. Select action: Plan returns SelectedAction with action + metadata
+    const selected = execution.plan.selectAction({
       state: newAppState,
       params: execution.params,
       db: execution.context.db,
+      a11y,
+      identified,
+      planState: execution.planState,
     });
 
-    console.log(`[FSM] Selected action: ${actionKey ?? "none"}`);
+    console.log(`[FSM] Selected action: ${selected?.action?.type ?? "none"}`);
 
     // 7. No action = stuck (goal not reached and nothing to do)
-    if (!actionKey) {
+    if (!selected) {
       execution.status = "failed";
       execution.error = "No action selected";
       return { success: false, error: execution.error };
     }
 
-    // 8. Look up command from the appropriate state
-    // Popup actions come from popup state, others from mainWindow state
-    const isPopupAction = actionKey.startsWith("dismiss_") || actionKey.startsWith("cancel_");
-    const targetState = isPopupAction ? identified.popup : identified.mainWindow;
-    const actionFrame = isPopupAction
-      ? (identified.popupMetadata as { frame?: A11yNode } | undefined)?.frame
-      : (identified.mainWindowMetadata as { frame?: A11yNode } | undefined)?.frame;
-
-    const commandTemplate: ActionTemplate | undefined = targetState?.commands?.[actionKey];
-    if (!commandTemplate) {
-      execution.status = "failed";
-      execution.error = `Unknown command: ${actionKey} (state: ${targetState?.id ?? "none"})`;
-      return { success: false, error: execution.error };
-    }
-
-    // Compute additional params if needed
-    const actionParams = computeActionParams(
-      actionKey,
-      newAppState,
-      execution.params
-    );
-
-    // Command can be static Action or function that returns Action
-    const action: Action = typeof commandTemplate === "function"
-      ? commandTemplate(actionParams)
-      : commandTemplate;
+    // 8. Extract frame from the metadata returned by selectAction
+    // No more heuristics - just use what selectAction returned
+    const actionFrame = (selected.metadata as { frame?: A11yNode } | undefined)?.frame;
 
     // 9. Execute action
-    const actionContext: ActionContext<TParams> = {
+    const actionContext: ActionContext<TParams, TPlanState> = {
       a11y,
       screenshot,
       execution,
@@ -346,8 +302,8 @@ export async function runExecution<TParams extends ActionParams>(
     };
 
     try {
-      await executeAction(action, actionContext);
-      execution.lastAction = action;
+      await executeAction(selected.action, actionContext);
+      execution.lastAction = selected.action;
     } catch (error) {
       execution.emit({
         type: "status",
@@ -362,6 +318,7 @@ export async function runExecution<TParams extends ActionParams>(
         state: newAppState,
         params: execution.params,
         db: execution.context.db,
+        planState: execution.planState,
       })
     ) {
       execution.status = "succeeded";
@@ -369,10 +326,6 @@ export async function runExecution<TParams extends ActionParams>(
     }
 
     // 11. Wait for UI to settle
-    await sleep(200);
+    await sleep(10);
   }
-
-  execution.status = "failed";
-  execution.error = "Max steps exceeded";
-  return { success: false, error: "Max steps exceeded" };
 }

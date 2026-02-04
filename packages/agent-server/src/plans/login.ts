@@ -1,6 +1,6 @@
 import { z } from "zod";
-import type { Plan, ActionParams, AppState } from "../ia/types.js";
-import type Database from "better-sqlite3";
+import type { Plan, ActionParams, AppState, SelectedAction, PlanArgs } from "../ia/types.js";
+import { LoginActions, PopupActions, WindowActions, CommonActions } from "../ia/actions.js";
 
 /**
  * Login plan params
@@ -36,40 +36,51 @@ export const loginPlan: Plan<LoginParams> = {
     return state.mainWindow.view === "chat" && state.popup === null;
   },
 
-  selectAction: ({
-    state,
-    params,
-  }: {
-    state: AppState;
-    params: LoginParams;
-    db: Database.Database;
-  }) => {
-    // Rule 1: Always dismiss popups first
-    if (state.popup !== null) {
-      return "dismiss_popup";
+  selectAction: ({ state, params, identified }: PlanArgs<LoginParams>): SelectedAction | null => {
+    // Rule 1: Always dismiss popups first (use popup frame)
+    if (state.popup !== null && identified.popup) {
+      return {
+        action: PopupActions.DISMISS,
+        metadata: identified.popup.metadata,
+      };
     }
+
+    // Get main window metadata for all main window actions
+    const mainMeta = identified.mainWindow?.metadata;
 
     // Rule 2: Based on main window state
     switch (state.mainWindow.view) {
       case "login_qr":
         // Wait for QR code scan (effect watcher emits QR)
-        return "wait";
+        return { action: CommonActions.WAIT, metadata: mainMeta };
 
       case "login_account":
         // Choose between existing account or new account
-        return params.newAccount ? "click_switch_account" : "click_login";
+        return {
+          action: params.newAccount ? LoginActions.CLICK_SWITCH_ACCOUNT : LoginActions.CLICK_LOGIN,
+          metadata: mainMeta,
+        };
 
       case "login_phone_confirm":
         // Wait for phone confirmation (effect watcher emits once on state entry)
-        return "wait";
+        return { action: CommonActions.WAIT, metadata: mainMeta };
 
       case "login_loading":
         // Wait for app to load
-        return "wait";
+        return { action: CommonActions.WAIT, metadata: mainMeta };
 
       case "chat":
-        // Maximize window, then goal is reached
-        return "maximize";
+        // Wait for UI to settle, then maximize window
+        return {
+          action: {
+            type: "sequence",
+            actions: [
+              CommonActions.WAIT_LONG,
+              WindowActions.MAXIMIZE,
+            ],
+          },
+          metadata: mainMeta,
+        };
 
       default:
         // Unknown state

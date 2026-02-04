@@ -12,8 +12,10 @@ function treeToAria(node: A11yNode, depth: number = 0): string {
     ? `@(${node.bounds.x},${node.bounds.y} ${node.bounds.width}x${node.bounds.height})`
     : "";
   const name = node.name ? `"${node.name}"` : "";
+  const states = node.states?.length ? `[${node.states.join(",")}]` : "";
 
-  let line = `${indent}- ${node.role} ${name} ${bounds}`.trimEnd();
+  const parts = [node.role, name, states, bounds].filter(Boolean).join(" ");
+  let line = `${indent}- ${parts}`;
 
   if (node.children && node.children.length > 0) {
     const childLines = node.children.map(c => treeToAria(c, depth + 1)).join("\n");

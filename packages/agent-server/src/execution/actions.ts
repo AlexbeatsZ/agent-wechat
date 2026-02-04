@@ -6,10 +6,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export interface ActionContext<TParams = unknown> {
+export interface ActionContext<TParams = unknown, TPlanState = unknown> {
   a11y: A11yNode;
   screenshot: string; // base64
-  execution: Execution<TParams>;
+  execution: Execution<TParams, TPlanState>;
   frame?: A11yNode; // Scoped frame for querySelector (from identify metadata)
 }
 
@@ -19,9 +19,9 @@ export interface ActionContext<TParams = unknown> {
  * Actions are predefined operations like click, type, scroll, etc.
  * The selector in actions uses CSS-like syntax.
  */
-export async function executeAction<TParams>(
+export async function executeAction<TParams, TPlanState = unknown>(
   action: Action,
-  ctx: ActionContext<TParams>
+  ctx: ActionContext<TParams, TPlanState>
 ): Promise<void> {
   const { a11y, execution, frame } = ctx;
   const session = execution.context.session;
@@ -30,14 +30,25 @@ export async function executeAction<TParams>(
 
   switch (action.type) {
     case "click": {
-      // Find element using CSS-like selector (scoped to frame if available)
-      const element = querySelector(queryRoot, action.selector);
-      if (!element?.bounds) {
-        throw new Error(`Element not found: ${action.selector}`);
+      let x: number;
+      let y: number;
+
+      // Check if coordinates provided directly
+      if (action.x !== undefined && action.y !== undefined) {
+        x = action.x;
+        y = action.y;
+      } else if (action.selector) {
+        // Find element using CSS-like selector (scoped to frame if available)
+        const element = querySelector(queryRoot, action.selector);
+        if (!element?.bounds) {
+          throw new Error(`Element not found: ${action.selector}`);
+        }
+        // Calculate center of element
+        x = Math.round(element.bounds.x + element.bounds.width / 2);
+        y = Math.round(element.bounds.y + element.bounds.height / 2);
+      } else {
+        throw new Error("Click action requires either selector or x,y coordinates");
       }
-      // Calculate center of element
-      const x = Math.round(element.bounds.x + element.bounds.width / 2);
-      const y = Math.round(element.bounds.y + element.bounds.height / 2);
 
       // Build click args - use window activation if frame info available
       const args: string[] = [];
@@ -70,8 +81,22 @@ export async function executeAction<TParams>(
     }
 
     case "key": {
-      // Press key combo (e.g., "Return", "Escape", "ctrl+a")
-      await execCommand("wechat-key", [action.combo], { session });
+      // Focus window first if frame info available, then press key combo
+      const keyArgs: string[] = [];
+      if (frame?.window?.pid && frame?.bounds) {
+        // Activate specific window by PID + bounds before key press
+        keyArgs.push(
+          "--window",
+          String(frame.window.pid),
+          String(frame.bounds.x),
+          String(frame.bounds.y),
+          String(frame.bounds.width),
+          String(frame.bounds.height),
+          "--"
+        );
+      }
+      keyArgs.push(action.combo);
+      await execCommand("wechat-key", keyArgs, { session });
       break;
     }
 

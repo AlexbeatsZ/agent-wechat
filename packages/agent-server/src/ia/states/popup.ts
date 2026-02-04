@@ -32,10 +32,6 @@ export const popupErrorState: IAState<FrameIdentifyMetadata> = {
       },
     };
   },
-
-  commands: {
-    dismiss_popup: { type: "click", selector: 'push-button[name="OK"]' },
-  },
 };
 
 /**
@@ -73,11 +69,6 @@ export const popupConfirmState: IAState<FrameIdentifyMetadata> = {
       },
     };
   },
-
-  commands: {
-    dismiss_popup: { type: "click", selector: 'push-button[name=/OK|Confirm|确定|确认/i]' },
-    cancel_popup: { type: "click", selector: 'push-button[name=/Cancel|取消/i]' },
-  },
 };
 
 /**
@@ -110,10 +101,6 @@ export const popupInfoState: IAState<FrameIdentifyMetadata> = {
       },
     };
   },
-
-  commands: {
-    dismiss_popup: { type: "click", selector: 'push-button[name=/OK|确定/i]' },
-  },
 };
 
 export const popupStates: IAState<FrameIdentifyMetadata>[] = [
@@ -122,3 +109,5 @@ export const popupStates: IAState<FrameIdentifyMetadata>[] = [
   // popupInfoState is intentionally omitted to avoid false positives
   // It overlaps with popupConfirmState too much
 ];
+
+export type PopupState = typeof popupErrorState | typeof popupConfirmState;

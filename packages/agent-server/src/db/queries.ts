@@ -12,6 +12,7 @@ function dbChatToChat(row: typeof chats.$inferSelect): Chat {
   return {
     id: row.id,
     name: row.name,
+    imageHash: row.imageHash ?? undefined,
     avatarDescription: row.avatarDescription ?? undefined,
     lastMessagePreview: row.lastMessagePreview ?? undefined,
     lastMessageSender: row.lastMessageSender ?? undefined,
@@ -19,6 +20,7 @@ function dbChatToChat(row: typeof chats.$inferSelect): Chat {
     unreadCount: row.unreadCount ?? 0,
     isGroup: row.isGroup ?? false,
     isPinned: row.isPinned ?? false,
+    isMuted: row.isMuted ?? false,
     searchTerms: row.searchTerms ? JSON.parse(row.searchTerms) : undefined,
     scrollPositionHint: row.scrollPositionHint ?? undefined,
     createdAt: row.createdAt ?? new Date().toISOString(),
@@ -62,6 +64,32 @@ export function findChatsByName(
   return rows.map(dbChatToChat);
 }
 
+export function findChatByImageHash(
+  db: DatabaseInstance,
+  imageHash: string
+): Chat | null {
+  const row = db
+    .select()
+    .from(chats)
+    .where(eq(chats.imageHash, imageHash))
+    .get();
+
+  return row ? dbChatToChat(row) : null;
+}
+
+export function findChatsByExactName(
+  db: DatabaseInstance,
+  name: string
+): Chat[] {
+  const rows = db
+    .select()
+    .from(chats)
+    .where(eq(chats.name, name))
+    .all();
+
+  return rows.map(dbChatToChat);
+}
+
 export function upsertChat(
   db: DatabaseInstance,
   chat: Partial<Chat> & { name: string }
@@ -73,6 +101,7 @@ export function upsertChat(
     .values({
       id,
       name: chat.name,
+      imageHash: chat.imageHash ?? null,
       avatarDescription: chat.avatarDescription ?? null,
       lastMessagePreview: chat.lastMessagePreview ?? null,
       lastMessageSender: chat.lastMessageSender ?? null,
@@ -80,21 +109,26 @@ export function upsertChat(
       unreadCount: chat.unreadCount ?? 0,
       isGroup: chat.isGroup ?? false,
       isPinned: chat.isPinned ?? false,
+      isMuted: chat.isMuted ?? false,
       searchTerms: chat.searchTerms ? JSON.stringify(chat.searchTerms) : null,
       scrollPositionHint: chat.scrollPositionHint ?? null,
+      createdAt: chat.createdAt ?? now,
       updatedAt: now,
     })
     .onConflictDoUpdate({
       target: chats.id,
       set: {
         name: chat.name,
+        imageHash: chat.imageHash !== undefined ? chat.imageHash : sql`${chats.imageHash}`,
         avatarDescription: chat.avatarDescription !== undefined ? chat.avatarDescription : sql`${chats.avatarDescription}`,
         lastMessagePreview: chat.lastMessagePreview !== undefined ? chat.lastMessagePreview : sql`${chats.lastMessagePreview}`,
         lastMessageSender: chat.lastMessageSender !== undefined ? chat.lastMessageSender : sql`${chats.lastMessageSender}`,
         lastActivityAt: chat.lastActivityAt !== undefined ? chat.lastActivityAt : sql`${chats.lastActivityAt}`,
         unreadCount: chat.unreadCount ?? 0,
-        isGroup: chat.isGroup ?? false,
+        // Only update isGroup if explicitly provided (don't downgrade from true to false)
+        isGroup: chat.isGroup !== undefined ? chat.isGroup : sql`${chats.isGroup}`,
         isPinned: chat.isPinned ?? false,
+        isMuted: chat.isMuted ?? false,
         searchTerms: chat.searchTerms !== undefined ? JSON.stringify(chat.searchTerms) : sql`${chats.searchTerms}`,
         scrollPositionHint: chat.scrollPositionHint !== undefined ? chat.scrollPositionHint : sql`${chats.scrollPositionHint}`,
         updatedAt: now,

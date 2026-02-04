@@ -90,11 +90,13 @@ interface AppState {
 
 // Actions are UI operations
 type Action =
-  | { type: "click"; selector: string }
+  | { type: "click"; selector: string }      // Click by selector
+  | { type: "click"; x: number; y: number }  // Click by coordinates
   | { type: "type"; text: string }
   | { type: "key"; combo: string }
-  | { type: "scroll"; direction: "up" | "down"; x: number; y: number }
+  | { type: "scroll"; direction: "up" | "down"; x?: number; y?: number }
   | { type: "wait"; ms: number }
+  | { type: "emit"; event: SubscriptionEvent }  // Emit event to client
   | { type: "sequence"; actions: Action[] };
 
 // Identify returns metadata (e.g., matched frame for scoped queries)
@@ -195,12 +197,13 @@ findAncestor(button, (n) => n.role === 'frame' && n.name === 'WeChat')
 ## CLI Commands
 
 ```bash
-pnpm cli up          # Start container
-pnpm cli down        # Stop container
-pnpm cli status      # Check server + login state
-pnpm cli login       # Subscribe to login flow (shows QR in terminal)
-pnpm cli chats       # List chats
-pnpm cli send <name> <msg>  # Send message
+pnpm cli up              # Start container
+pnpm cli down            # Stop container
+pnpm cli status          # Check server + login state
+pnpm cli login           # Subscribe to login flow (shows QR in terminal)
+pnpm cli chats list      # List chats from DB (id, unread, group, name)
+pnpm cli chats sync      # Sync chat list via selection (default: 20 chats)
+pnpm cli send <id> <msg> # Send message to chat
 ```
 
 ## Building
@@ -216,15 +219,52 @@ pnpm build:image:amd64        # Build Docker image (Intel)
 - `AGENT_WECHAT_URL` - Override server URL (default: http://localhost:6174)
 - `AGENT_DB_PATH` - Override SQLite DB path (default: /data/agent.db)
 
-## Migrations (Drizzle)
+## Database
 
-- Migrations live in `packages/agent-server/drizzle/`
-- On startup, `initDb()` runs Drizzle migrations if present.
-- If an existing DB has tables but no migration history, the baseline migration is recorded as applied.
-- Generate new migrations:
-  ```bash
-  pnpm --filter @thisnick/agent-wechat-server run db:generate -- --name <name>
-  ```
+### Overview
+
+- **Technology**: SQLite + Drizzle ORM
+- **Location**: `/data/agent.db` in container (configurable via `AGENT_DB_PATH`)
+- **Schema**: `packages/agent-server/src/db/schema.ts`
+- **Queries**: `packages/agent-server/src/db/queries.ts`
+- **Migrations**: `packages/agent-server/drizzle/`
+
+### Tables
+
+| Table | Purpose |
+|-------|---------|
+| `sessions` | Multi-user sessions (display, VNC port, login state) |
+| `chats` | Chat/conversation metadata (name, avatar hash, unread count) |
+| `messages` | Message content and metadata |
+| `sync_state` | Key-value store for sync progress |
+| `context` | FSM AppState persistence (JSON blob) |
+
+### Initialization (Dual Approach)
+
+On startup, `initDb()` in `src/db/index.ts` does:
+
+1. **Legacy bootstrap**: `CREATE TABLE IF NOT EXISTS` for all tables
+   - Frozen at v1 baseline schema
+   - Ensures tables exist for fresh installs
+2. **Drizzle migrations**: Runs any pending migrations from `drizzle/`
+   - Handles schema changes (new columns, indexes, etc.)
+   - If DB has tables but no migration history, baseline is auto-recorded
+
+### Making Schema Changes
+
+1. **Edit schema**: Update `src/db/schema.ts` with new columns/tables
+2. **Generate migration**:
+   ```bash
+   cd packages/agent-server && npx drizzle-kit generate --config drizzle.config.ts
+   ```
+3. **Test**: Migration runs automatically on next server start
+
+### Development Tips
+
+- **Fresh start**: Delete DB file and restart - tables recreate from bootstrap + migrations
+- **Schema mismatch errors**: Usually means you need to generate/run a migration
+- **Type `DatabaseInstance`**: Drizzle wrapper, used in queries and effects (not raw `better-sqlite3`)
+- **Don't edit legacy bootstrap**: It's frozen; use migrations for all changes
 
 ## Key Design Decisions
 
@@ -281,6 +321,29 @@ export const myState: IAState<FrameIdentifyMetadata> = {
 3. Call via `createExecution(myPlan, params, context, options)`
 4. Remember: action executes BEFORE goal check (can have final action)
 
+## Chat Sync Algorithm
+
+The `syncChatsPlan` uses selection-based navigation to sync chats reliably:
+
+1. **Init**: Close any open chat, press `Home`, then `ctrl+Tab` to focus first item
+2. **Loop** (no chat open - checking focused item):
+   - If focused should skip (File Transfer, Official Accounts, etc.) → `ctrl+Tab`
+   - If focused === lastSelected → done (looped back to start)
+   - Otherwise → note unreadCount, press `space` to select
+3. **Loop** (chat open - persist and move on):
+   - Read chat name from header (unambiguous)
+   - Detect group via `(n)` member count pattern
+   - Extract avatar image hash from selected list item
+   - Persist to DB with noted unreadCount
+   - Emit `sync_progress` event
+   - Click to close, `ctrl+Tab` to next
+
+**Key features:**
+- Uses AT-SPI states (`SELECTED`, `FOCUSED`) for reliable detection
+- Plan-local state (`planState`) tracks progress without persisting to AppState
+- Decoupled `ctrl+Tab` and `space` for skip handling
+- Matching: image hash first, then exact name (if unique)
+
 ## Current Status
 
 - [x] Deterministic FSM for login flow
@@ -290,6 +353,10 @@ export const myState: IAState<FrameIdentifyMetadata> = {
 - [x] Frame-scoped click/type actions
 - [x] Per-state commands with shared base (window controls)
 - [x] Post-login maximize via execution loop (action → goal check)
-- [ ] Chat listing via FSM plan
+- [x] Chat list sync via selection-based FSM plan (`syncChatsPlan`)
+- [x] Chat identity matching (image hash first, name fallback)
+- [x] Split chat states: `chat` (no selection) vs `chat_open` (with SELECTED item)
+- [x] AT-SPI states (SELECTED, FOCUSED) in a11y tree
+- [x] Plan-local state for execution-scoped data
 - [ ] Send message via FSM plan
 - [ ] File sending

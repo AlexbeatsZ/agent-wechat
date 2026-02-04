@@ -79,6 +79,13 @@ export type LoginSubscriptionEvent =
   | { type: "login_timeout" }                     // QR expired
   | { type: "error"; message: string };           // No QR found, etc.
 
+// Sync subscription events (for chat list sync)
+export type SyncSubscriptionEvent =
+  | { type: "status"; message: string }           // Status update
+  | { type: "sync_progress"; processedCount: number }  // Progress (chats processed)
+  | { type: "sync_complete"; count: number }      // Sync completed
+  | { type: "error"; message: string };           // Error during sync
+
 // ============================================
 // CHATS
 // ============================================
@@ -86,6 +93,7 @@ export type LoginSubscriptionEvent =
 export interface Chat {
   id: string;
   name: string;
+  imageHash?: string;  // MD5 hash of avatar for identity matching
   avatarDescription?: string;
   lastMessagePreview?: string;
   lastMessageSender?: string;
@@ -93,6 +101,7 @@ export interface Chat {
   unreadCount: number;
   isGroup: boolean;
   isPinned: boolean;
+  isMuted: boolean;
   searchTerms?: string[];
   scrollPositionHint?: number;
   createdAt: string;

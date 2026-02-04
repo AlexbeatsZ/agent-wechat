@@ -1,3 +1,4 @@
+import type { DatabaseInstance } from "../db/index.js";
 import type { AppState, Effect, EffectWatcher } from "../ia/types.js";
 
 /**
@@ -32,12 +33,11 @@ export const effectWatchers: EffectWatcher[] = [
     prev.mainWindow.view.startsWith("login")
       ? [{ type: "emit", event: { type: "login_success" } }]
       : [],
-
 ];
 
 /**
  * Collect effects from all watchers.
  */
-export function collectEffects(prev: AppState, next: AppState): Effect[] {
-  return effectWatchers.flatMap((w) => w({ prev, next }));
+export function collectEffects(prev: AppState, next: AppState, db: DatabaseInstance): Effect[] {
+  return effectWatchers.flatMap((w) => w({ prev, next, db }));
 }
