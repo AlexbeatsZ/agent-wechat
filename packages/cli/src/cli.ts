@@ -183,14 +183,48 @@ chatsCmd
     await cmdChats(getClient(), parseInt(opts.limit, 10), parseInt(opts.offset, 10), opts.json ?? false);
   });
 
-program
+chatsCmd
+  .command("get <chatId>")
+  .description("Get details for a specific chat")
+  .option("-j, --json", "Output as JSON")
+  .action(async (chatId: string, opts) => {
+    await cmdChatGet(getClient(), chatId, opts.json ?? false);
+  });
+
+chatsCmd
   .command("find <name>")
   .description("Find chat by name")
   .action(async (name: string) => {
     await cmdFind(getClient(), name);
   });
 
-program
+// ============================================
+// Messages Commands
+// ============================================
+
+const messagesCmd = program
+  .command("messages")
+  .description("Message commands");
+
+messagesCmd
+  .command("list <chatId>")
+  .description("List messages for a chat")
+  .option("-l, --limit <number>", "Maximum number of messages", "50")
+  .option("-o, --offset <number>", "Skip first N messages", "0")
+  .option("-j, --json", "Output as JSON")
+  .action(async (chatId: string, opts) => {
+    await cmdMessages(getClient(), chatId, parseInt(opts.limit, 10), parseInt(opts.offset, 10), opts.json ?? false);
+  });
+
+messagesCmd
+  .command("media <chatId> <localId>")
+  .description("Save media attachment (image thumbnail, emoji, or voice)")
+  .option("-o, --output <path>", "Output file path")
+  .action(async (chatId: string, localIdStr: string, opts) => {
+    await cmdMedia(getClient(), chatId, parseInt(localIdStr, 10), opts.output);
+  });
+
+messagesCmd
   .command("send <chatId> <message...>")
   .description("Send a message to a chat")
   .action(async (chatId: string, messageParts: string[]) => {
@@ -329,6 +363,143 @@ async function cmdChats(client: Client, limit: number = 50, offset: number = 0, 
     const unread = chat.unreadCount > 0 ? String(chat.unreadCount).padStart(2) : "  ";
     const group = chat.isGroup ? "  Y  " : "     ";
     console.log(`${id}  ${unread}    ${group}  ${chat.name}`);
+  }
+}
+
+async function cmdChatGet(client: Client, chatId: string, json: boolean = false) {
+  const chat = await client.chats.get.query({ id: chatId });
+
+  if (!chat) {
+    console.error(`Chat not found: ${chatId}`);
+    process.exit(1);
+  }
+
+  if (json) {
+    console.log(JSON.stringify(chat, null, 2));
+    return;
+  }
+
+  console.log(`Chat ID:        ${chat.username ?? chat.id}`);
+  console.log(`Name:           ${chat.name}`);
+  if (chat.remark) console.log(`Remark:         ${chat.remark}`);
+  console.log(`Group:          ${chat.isGroup ? "Yes" : "No"}`);
+  console.log(`Unread:         ${chat.unreadCount}`);
+  if (chat.lastMessagePreview) {
+    const sender = chat.lastMessageSender ? `${chat.lastMessageSender}: ` : "";
+    console.log(`Last message:   ${sender}${chat.lastMessagePreview}`);
+  }
+  if (chat.lastActivityAt) console.log(`Last activity:  ${chat.lastActivityAt}`);
+}
+
+/** WeChat base message types */
+const MSG_BASE_TYPES: Record<number, string> = {
+  1: "text",
+  3: "image",
+  34: "voice",
+  43: "video",
+  47: "emoji",
+  49: "appmsg",
+  10000: "system",
+  10002: "revoke",
+};
+
+/** Appmsg (type 49) subtypes */
+const APPMSG_SUB_TYPES: Record<number, string> = {
+  1: "text-link",
+  3: "music",
+  4: "video",
+  5: "link",
+  6: "file",
+  8: "sticker",
+  19: "location",
+  33: "mini-program",
+  36: "mini-program",
+  57: "reply",
+  63: "livestream",
+};
+
+function getMsgTypeLabel(rawType: number): string {
+  const base = rawType & 0xFFFFFFFF;
+  const sub = Math.floor(rawType / 0x100000000);
+
+  const baseLabel = MSG_BASE_TYPES[base];
+  if (!baseLabel) return `type:${rawType}`;
+
+  if (base === 49 && sub > 0) {
+    return APPMSG_SUB_TYPES[sub] ?? `appmsg:${sub}`;
+  }
+  return baseLabel;
+}
+
+async function cmdMessages(client: Client, chatId: string, limit: number = 50, offset: number = 0, json: boolean = false) {
+  const messages = await client.messages.list.query({ chatId, limit, offset });
+
+  if (json) {
+    console.log(JSON.stringify(messages, null, 2));
+    return;
+  }
+
+  if (messages.length === 0) {
+    console.log("No messages found.");
+    return;
+  }
+
+  // Display messages oldest-first for natural reading order
+  const sorted = [...messages].reverse();
+
+  // Compute column widths
+  const maxIdLen = Math.max(2, ...sorted.map(m => String(m.localId).length));
+  const maxTypeLen = Math.max(4, ...sorted.map(m => getMsgTypeLabel(m.type).length));
+
+  // Header
+  console.log(`${"ID".padEnd(maxIdLen)}  ${"Time".padEnd(22)}  ${"Type".padEnd(maxTypeLen)}  Message`);
+  console.log("-".repeat(maxIdLen + maxTypeLen + 32));
+
+  for (const msg of sorted) {
+    const time = new Date(msg.timestamp).toLocaleString();
+    const typeLabel = getMsgTypeLabel(msg.type);
+    const id = String(msg.localId).padEnd(maxIdLen);
+    const sender = msg.sender ? `${msg.sender}: ` : "";
+    const preview = msg.content.length > 120 ? msg.content.slice(0, 120) + "..." : msg.content;
+
+    console.log(`${id}  ${time.padEnd(22)}  ${typeLabel.padEnd(maxTypeLen)}  ${sender}${preview}`);
+  }
+
+  console.log(`\n${messages.length} message(s) shown.`);
+}
+
+async function cmdMedia(client: Client, chatId: string, localId: number, outputPath?: string) {
+  const result = await client.messages.media.query({ chatId, localId });
+
+  if (result.type === "unsupported") {
+    console.error("No media found for this message (unsupported type or not found).");
+    process.exit(1);
+  }
+
+  const outFile = outputPath ?? result.filename;
+
+  if (result.type === "emoji" && result.url) {
+    // Download from CDN URL
+    console.log(`Downloading emoji from CDN...`);
+    const response = await fetch(result.url);
+    if (!response.ok) {
+      console.error(`Failed to download emoji: HTTP ${response.status}`);
+      process.exit(1);
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    fs.writeFileSync(outFile, buffer);
+    console.log(`Saved ${result.type} to ${outFile} (${buffer.length} bytes)`);
+  } else if (result.data) {
+    // Decode base64
+    const buffer = Buffer.from(result.data, "base64");
+    fs.writeFileSync(outFile, buffer);
+    console.log(`Saved ${result.type} to ${outFile} (${buffer.length} bytes)`);
+  } else if (result.type === "image") {
+    console.error("Image thumbnail not yet cached by WeChat. Try opening the chat in the app first.");
+    process.exit(1);
+  } else if (result.type === "emoji") {
+    console.log(`Emoji found (md5 in filename: ${result.filename}) but no CDN URL available.`);
+    process.exit(1);
   }
 }
 

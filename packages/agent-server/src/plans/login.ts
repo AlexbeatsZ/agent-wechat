@@ -165,6 +165,7 @@ export const loginPlan: Plan<LoginParams, LoginPlanState> = {
 
         // Phase: detecting_user -> find account dir from WeChat process
         if (planState.phase === "detecting_user") {
+          const detectStart = Date.now();
           // Get PID from session, or detect it dynamically (for default session
           // started by entrypoint.sh where wechatPid isn't tracked in DB)
           // Find WeChat PID: try stored PID first, fall back to pgrep.
@@ -191,6 +192,7 @@ export const loginPlan: Plan<LoginParams, LoginPlanState> = {
           }
 
           if (wechatPid && accountDir) {
+              console.log(`[login] User detection took ${Date.now() - detectStart}ms (pid=${wechatPid}, account=${accountDir})`);
               planState.accountDir = accountDir;
 
               // Check if account changed
@@ -201,8 +203,10 @@ export const loginPlan: Plan<LoginParams, LoginPlanState> = {
               updateSessionLoggedInUser(db, sessionId, accountDir);
 
               // Check if stored keys are valid (verifies with sqlcipher)
+              const keyCheckStart = Date.now();
               if (!needsKeyExtraction(db, sessionId, accountDir)) {
                 // All keys valid - skip extraction
+                console.log(`[login] Key check took ${Date.now() - keyCheckStart}ms — skipping extraction`);
                 planState.phase = "done";
                 return {
                   action: {

@@ -43,12 +43,12 @@ function isKeyLike(arr) {
         if (arr[b] !== 0) nonzero++;
         unique.add(arr[b]);
     }
-    if (nonzero < 26 || unique.size < 16) return false;
+    if (nonzero < 20 || unique.size < 10) return false;
     var printable = 0;
     for (var b = 0; b < 32; b++) {
         if (arr[b] >= 0x20 && arr[b] <= 0x7e) printable++;
     }
-    if (printable > 19) return false;
+    if (printable > 26) return false;
     return true;
 }
 
@@ -177,18 +177,26 @@ def extract_candidates(pid):
     return ctx_count, keys
 
 
-def filter_candidates(keys):
+FILTER_LEVELS = [
+    # (max_printable, max_zeros, min_unique) — strict to relaxed
+    (19, 6, 16),   # Level 0: strict
+    (24, 12, 12),  # Level 1: moderate (previous default)
+    (28, 18, 8),   # Level 2: relaxed
+]
+
+
+def filter_candidates(keys, level=1):
+    max_printable, max_zeros, min_unique = FILTER_LEVELS[level]
     filtered = []
     for key in keys:
         if len(key) != 64:
             continue
         raw = bytes.fromhex(key)
-        # Relaxed filters — original thresholds were too aggressive
-        if sum(1 for b in raw if 0x20 <= b <= 0x7e) > 24:
+        if sum(1 for b in raw if 0x20 <= b <= 0x7e) > max_printable:
             continue
-        if raw.count(0) > 16:
+        if raw.count(0) > max_zeros:
             continue
-        if len(set(raw)) < 12:
+        if len(set(raw)) < min_unique:
             continue
         filtered.append(key)
     return list(dict.fromkeys(filtered))
@@ -242,26 +250,48 @@ def main():
     print(f"  cipher_ctx structures: {ctx_count}")
     print(f"  Raw candidates: {len(raw_keys)}")
 
-    candidates = filter_candidates(raw_keys)
-    print(f"  After filtering: {len(candidates)}")
-
-    if not candidates:
-        print("ERROR: No candidates found. Is WeChat logged in?")
-        sys.exit(1)
-
     results = {}
     tests = 0
-    for db_path in databases:
-        db_name = os.path.basename(db_path)
-        for key in candidates:
-            tests += 1
-            count = test_key(db_path, key)
-            if count is not None:
-                results[db_name] = {"key": key, "tables": count, "path": db_path}
-                print(f"  {db_name}: {key[:16]}... ({count} tables)")
-                break
-        else:
-            print(f"  {db_name}: NOT FOUND")
+    remaining_dbs = list(databases)
+    prev_candidates = set()
+
+    for level in range(len(FILTER_LEVELS)):
+        candidates = filter_candidates(raw_keys, level=level)
+        # Only try candidates not already tested in a previous pass
+        new_candidates = [k for k in candidates if k not in prev_candidates]
+        prev_candidates.update(candidates)
+
+        if not new_candidates and level == 0:
+            print("ERROR: No candidates found. Is WeChat logged in?")
+            sys.exit(1)
+
+        if not new_candidates:
+            continue
+
+        label = ["strict", "moderate", "relaxed"][level]
+        print(f"\n  Pass {level} ({label}): {len(new_candidates)} new candidates, {len(remaining_dbs)} DBs remaining")
+
+        still_remaining = []
+        for db_path in remaining_dbs:
+            db_name = os.path.basename(db_path)
+            found = False
+            for key in new_candidates:
+                tests += 1
+                count = test_key(db_path, key)
+                if count is not None:
+                    results[db_name] = {"key": key, "tables": count, "path": db_path}
+                    print(f"  {db_name}: {key[:16]}... ({count} tables)")
+                    found = True
+                    break
+            if not found:
+                still_remaining.append(db_path)
+        remaining_dbs = still_remaining
+
+        if not remaining_dbs:
+            break
+
+    for db_path in remaining_dbs:
+        print(f"  {os.path.basename(db_path)}: NOT FOUND")
 
     print(f"\nDone: {len(results)}/{len(databases)} databases cracked ({tests} tests)")
 

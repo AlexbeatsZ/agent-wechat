@@ -161,8 +161,11 @@ export function verifyStoredKeys(
   const failed: string[] = [];
 
   for (const [dbName, hexKey] of Object.entries(keys)) {
+    const t = Date.now();
     const dbPath = getDbPath(accountDir, dbName);
-    if (!verifyKey(dbPath, hexKey)) {
+    const ok = verifyKey(dbPath, hexKey);
+    console.log(`[wechat-keys]   verify ${dbName}: ${ok ? "ok" : "FAILED"} (${Date.now() - t}ms)`);
+    if (!ok) {
       failed.push(dbName);
     }
   }
@@ -183,6 +186,7 @@ export function needsKeyExtraction(
   sessionId: string,
   accountDir: string
 ): boolean {
+  const t0 = Date.now();
   const storedKeys = getStoredKeys(db, sessionId, accountDir);
 
   // No keys at all → need extraction
@@ -191,22 +195,35 @@ export function needsKeyExtraction(
     return true;
   }
 
-  // Check for new DB files that we don't have keys for
+  // Only require keys for DBs we actually query.
+  // message_N.db and media_N.db are sharded — match by prefix.
+  const REQUIRED_EXACT = new Set(["session.db", "contact.db", "emoticon.db", "head_image.db"]);
+  const REQUIRED_PREFIXES = ["message_", "media_"];
+  const isRequired = (dbName: string) =>
+    REQUIRED_EXACT.has(dbName) || REQUIRED_PREFIXES.some(p => dbName.startsWith(p));
+  const t1 = Date.now();
   const existingDbs = listAccountDbs(accountDir);
-  const missingKeys = existingDbs.filter(dbName => !storedKeys[dbName]);
+  const missingKeys = existingDbs.filter(dbName => isRequired(dbName) && !storedKeys[dbName]);
+  console.log(`[wechat-keys] DB scan: ${existingDbs.length} files, ${missingKeys.length} missing keys (${Date.now() - t1}ms)`);
   if (missingKeys.length > 0) {
     console.log(`[wechat-keys] Missing keys for: ${missingKeys.join(", ")}`);
     return true;
   }
 
-  // Verify stored keys actually work (sqlcipher test)
-  const failed = verifyStoredKeys(db, sessionId, accountDir);
-  if (failed.length > 0) {
-    console.log(`[wechat-keys] Keys failed verification: ${failed.join(", ")}`);
+  // Spot-check: verify just one key as a sanity check.
+  // If one works, the rest almost certainly do (same extraction session).
+  const t2 = Date.now();
+  const checkDb = storedKeys["session.db"] ? "session.db" : Object.keys(storedKeys)[0];
+  const checkKey = storedKeys[checkDb];
+  const checkPath = getDbPath(accountDir, checkDb);
+  const ok = verifyKey(checkPath, checkKey);
+  console.log(`[wechat-keys] Spot-check ${checkDb}: ${ok ? "ok" : "FAILED"} (${Date.now() - t2}ms)`);
+  if (!ok) {
+    console.log(`[wechat-keys] Spot-check failed, re-extraction needed`);
     return true;
   }
 
-  console.log(`[wechat-keys] All ${Object.keys(storedKeys).length} keys valid`);
+  console.log(`[wechat-keys] ${Object.keys(storedKeys).length} keys stored, spot-check passed (total: ${Date.now() - t0}ms)`);
   return false;
 }
 

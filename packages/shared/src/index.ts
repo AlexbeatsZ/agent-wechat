@@ -24,8 +24,12 @@ export {
   findChatParamsSchema,
   getChatParamsSchema,
   // Message schemas
+  messageSchema,
+  listMessagesParamsSchema,
   sendParamsSchema,
   sendResultSchema,
+  getMediaParamsSchema,
+  mediaResultSchema,
   // Agent config schema
   agentConfigSchema,
 } from "./schemas/index.js";

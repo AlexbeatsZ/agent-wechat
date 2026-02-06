@@ -147,8 +147,24 @@ export const getChatParamsSchema = z.object({
 });
 
 // ============================================
-// MESSAGES (stubs for future)
+// MESSAGES (from WeChat's encrypted DBs)
 // ============================================
+
+export const messageSchema = z.object({
+  localId: z.number().int(),
+  serverId: z.number(),
+  chatId: z.string(),
+  sender: z.string().optional(),
+  type: z.number().int(),
+  content: z.string(),
+  timestamp: z.string(),
+});
+
+export const listMessagesParamsSchema = z.object({
+  chatId: z.string().min(1),
+  limit: z.number().int().positive().max(200).optional().default(50),
+  offset: z.number().int().nonnegative().optional().default(0),
+});
 
 export const sendParamsSchema = z.object({
   chatId: z.string().min(1),
@@ -160,6 +176,19 @@ export const sendResultSchema = z.object({
   success: z.boolean(),
   messageId: z.string().optional(),
   error: z.string().optional(),
+});
+
+export const getMediaParamsSchema = z.object({
+  chatId: z.string().min(1),
+  localId: z.number().int(),
+});
+
+export const mediaResultSchema = z.object({
+  type: z.enum(["image", "emoji", "voice", "unsupported"]),
+  data: z.string().optional(),
+  url: z.string().optional(),
+  format: z.string(),
+  filename: z.string(),
 });
 
 // ============================================
@@ -183,8 +212,12 @@ export type Chat = z.infer<typeof chatSchema>;
 export type ListChatsParams = z.infer<typeof listChatsParamsSchema>;
 export type FindChatParams = z.infer<typeof findChatParamsSchema>;
 export type GetChatParams = z.infer<typeof getChatParamsSchema>;
+export type Message = z.infer<typeof messageSchema>;
+export type ListMessagesParams = z.infer<typeof listMessagesParamsSchema>;
 export type SendParams = z.infer<typeof sendParamsSchema>;
 export type SendResult = z.infer<typeof sendResultSchema>;
+export type GetMediaParams = z.infer<typeof getMediaParamsSchema>;
+export type MediaResult = z.infer<typeof mediaResultSchema>;
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 export type Session = z.infer<typeof sessionSchema>;

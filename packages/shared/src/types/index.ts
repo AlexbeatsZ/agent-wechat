@@ -109,8 +109,24 @@ export interface GetChatParams {
 }
 
 // ============================================
-// MESSAGES (stubs for future WeChat DB reads)
+// MESSAGES (from WeChat's encrypted DBs)
 // ============================================
+
+export interface Message {
+  localId: number;
+  serverId: number;
+  chatId: string;             // WeChat username of the chat
+  sender?: string;            // Sender username (group chats)
+  type: number;               // WeChat message type (1=text, 34=voice, 47=emoji, 10000=system)
+  content: string;            // Message content (text or XML for media)
+  timestamp: string;          // ISO 8601
+}
+
+export interface ListMessagesParams {
+  chatId: string;
+  limit?: number;
+  offset?: number;
+}
 
 export interface SendParams {
   chatId: string;
@@ -122,6 +138,19 @@ export interface SendResult {
   success: boolean;
   messageId?: string;
   error?: string;
+}
+
+export interface GetMediaParams {
+  chatId: string;
+  localId: number;
+}
+
+export interface MediaResult {
+  type: "image" | "emoji" | "voice" | "unsupported";
+  data?: string;      // base64 for image/voice
+  url?: string;       // CDN URL for emoji
+  format: string;
+  filename: string;
 }
 
 // ============================================

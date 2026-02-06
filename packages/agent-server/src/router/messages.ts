@@ -1,10 +1,43 @@
 import { router, publicProcedure } from "./trpc.js";
 import {
   sendParamsSchema,
+  listMessagesParamsSchema,
+  getMediaParamsSchema,
 } from "@thisnick/agent-wechat-shared";
-import type { SendResult } from "@thisnick/agent-wechat-shared";
+import type { SendResult, Message, MediaResult } from "@thisnick/agent-wechat-shared";
+import { getStoredKeys } from "../lib/wechat-keys.js";
+import { listMessagesFromWechatDb } from "../lib/wechat-messages.js";
+import { getMessageMedia } from "../lib/wechat-media.js";
 
 export const messagesRouter = router({
+  /**
+   * List messages for a specific chat from WeChat's encrypted message_0.db
+   */
+  list: publicProcedure
+    .input(listMessagesParamsSchema)
+    .query(async ({ input, ctx }): Promise<Message[]> => {
+      const session = ctx.session;
+      if (!session?.loggedInUser) return [];
+
+      const keys = getStoredKeys(ctx.db, session.id, session.loggedInUser);
+      if (!keys["message_0.db"]) return [];
+
+      return listMessagesFromWechatDb(session.loggedInUser, keys, input.chatId, input.limit, input.offset);
+    }),
+
+  /**
+   * Get media attachment for a message (image thumbnail, emoji, or voice)
+   */
+  media: publicProcedure
+    .input(getMediaParamsSchema)
+    .query(async ({ input, ctx }): Promise<MediaResult> => {
+      const session = ctx.session;
+      if (!session?.loggedInUser) return { type: "unsupported", format: "", filename: "" };
+
+      const keys = getStoredKeys(ctx.db, session.id, session.loggedInUser);
+      return getMessageMedia(session.loggedInUser, keys, input.chatId, input.localId);
+    }),
+
   /**
    * Send a message - TODO: implement via FSM plan
    */

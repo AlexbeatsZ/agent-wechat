@@ -3,6 +3,8 @@ import superjson from "superjson";
 import WebSocket from "ws";
 import type {
   Chat,
+  Message,
+  MediaResult,
   LoginState,
   LoginResult,
   SendResult,
@@ -31,6 +33,8 @@ export interface Client {
     find: { query: (input: { name: string }) => Promise<Chat[]> };
   };
   messages: {
+    list: { query: (input: { chatId: string; limit?: number; offset?: number }) => Promise<Message[]> };
+    media: { query: (input: { chatId: string; localId: number }) => Promise<MediaResult> };
     send: { mutate: (input: { chatId: string; text: string; files?: string[] }) => Promise<SendResult> };
   };
   debug: {
