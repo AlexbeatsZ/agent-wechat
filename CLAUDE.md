@@ -37,7 +37,7 @@ WeChat automation via UI control. WeChat runs in a Docker container with automat
 
 ```
 packages/
-├── shared/           # Types (Chat, Message, LoginSubscriptionEvent, etc.)
+├── shared/           # Types (Chat, LoginSubscriptionEvent, etc.)
 ├── agent-server/     # Runs INSIDE container - tRPC server + FSM engine
 └── cli/              # Runs on HOST - HTTP client
 ```
@@ -122,50 +122,26 @@ interface IAState<TMetadata = unknown> {
 - `popup.ts` - Error/confirm/info popups
 
 **Effects** (`src/effects/watchers.ts`):
-```typescript
-// Effects fire ONLY when state changes (reactive, not imperative)
-export const effectWatchers: EffectWatcher[] = [
-  // QR changed → emit to client
-  ({ prev, next }) =>
-    next.mainWindow.qrData !== prev.mainWindow.qrData
-      ? [{ type: "emit", event: { type: "qr", qrData: next.mainWindow.qrData } }]
-      : [],
 
-  // Entered phone_confirm → emit once
-  ({ prev, next }) =>
-    next.mainWindow.view === "login_phone_confirm" &&
-    prev.mainWindow.view !== "login_phone_confirm"
-      ? [{ type: "emit", event: { type: "phone_confirm" } }]
-      : [],
-
-  // Reached chat from login → emit success
-  ({ prev, next }) =>
-    next.mainWindow.view === "chat" && prev.mainWindow.view.startsWith("login")
-      ? [{ type: "emit", event: { type: "login_success" } }]
-      : [],
-];
-```
+Currently empty — all login emissions (QR, phone_confirm, login_success, status) are handled directly by the login plan via `planState` to ensure proper sequencing with key extraction.
 
 **Plans** (`src/plans/login.ts`):
-```typescript
-export const loginPlan: Plan<LoginParams> = {
-  id: "login",
-  // Goal checked AFTER action executes
-  isGoalReached: ({ state }) =>
-    state.mainWindow.view === "chat" && state.popup === null,
-  selectAction: ({ state, params }) => {
-    if (state.popup) return "dismiss_popup";
-    switch (state.mainWindow.view) {
-      case "login_qr": return "wait";
-      case "login_account": return params.newAccount ? "click_switch_account" : "click_login";
-      case "login_phone_confirm": return "wait";
-      case "login_loading": return "wait";
-      case "chat": return "maximize";  // Final action before goal reached
-      default: return null;
-    }
-  },
-};
+
+Login plan phases: `authenticating → maximized → detecting_user → extracting_keys → done`
+
 ```
+authenticating   Wait for QR scan, phone confirm, loading
+     ↓           (transitions when view reaches "chat")
+maximized        Send maximize command
+     ↓
+detecting_user   Find WeChat PID via pgrep, resolve account dir from /proc/pid/fd
+     ↓           If stored keys are valid (verified with sqlcipher) → skip to done
+extracting_keys  Run Frida key extraction (~20s), store keys in wechat_keys table
+     ↓
+done             Emit login_success, goal check passes
+```
+
+The plan handles all emissions directly via `planState` (QR changes, phone_confirm, status messages, login_success) rather than using effect watchers.
 
 ### CSS-like Selectors
 
@@ -200,9 +176,9 @@ findAncestor(button, (n) => n.role === 'frame' && n.name === 'WeChat')
 pnpm cli up              # Start container
 pnpm cli down            # Stop container
 pnpm cli status          # Check server + login state
-pnpm cli auth login      # Subscribe to login flow (shows QR in terminal)
-pnpm cli chats list      # List chats from DB (id, unread, group, name)
-pnpm cli chats sync      # Sync chat list via selection (default: 20 chats)
+pnpm cli auth login      # Login flow (QR + DB key extraction)
+pnpm cli chats list      # List chats from WeChat's encrypted DBs
+pnpm cli find <name>     # Find chat by name
 pnpm cli send <id> <msg> # Send message to chat
 ```
 
@@ -233,9 +209,8 @@ pnpm build:image:amd64        # Build Docker image (Intel)
 
 | Table | Purpose |
 |-------|---------|
-| `sessions` | Multi-user sessions (display, VNC port, login state) |
-| `chats` | Chat/conversation metadata (name, avatar hash, unread count) |
-| `messages` | Message content and metadata |
+| `sessions` | Multi-user sessions (display, VNC port, login state, `loggedInUser`) |
+| `wechat_keys` | SQLCipher encryption keys per (session, account, db_name) |
 | `sync_state` | Key-value store for sync progress |
 | `context` | FSM AppState persistence (JSON blob) |
 
@@ -270,13 +245,13 @@ On startup, `initDb()` in `src/db/index.ts` does:
 
 | Decision | Choice | Why |
 |----------|--------|-----|
+| Chat data | Direct WeChat DB reads via SQLCipher | Fast, reliable — no RPA scraping needed |
+| Key extraction | Frida + sqlcipher CLI via execSync | better-sqlite3 doesn't link against sqlcipher natively |
 | Login flow | Deterministic FSM | Fast, cheap, reliable - no LLM needed |
 | State management | Redux-like (reduce → effects) | Pure reducers, reactive effects on state diff |
-| Effects | Fire on state CHANGE only | Prevents duplicate emissions |
 | Commands | Per-state (not global) | Each state defines available commands |
 | Execution order | Action → Goal check | Allows final actions before completion |
 | A11y tree | Parent refs added | Enables `findAncestor` for frame scoping |
-| Click/type scoping | Use frame from metadata | Ensures actions target correct window |
 | A11y selectors | CSS-like syntax | Familiar, composable |
 | Context | Persisted to SQLite | Survives restarts |
 
@@ -321,42 +296,49 @@ export const myState: IAState<FrameIdentifyMetadata> = {
 3. Call via `createExecution(myPlan, params, context, options)`
 4. Remember: action executes BEFORE goal check (can have final action)
 
-## Chat Sync Algorithm
+## WeChat DB Access
 
-The `syncChatsPlan` uses selection-based navigation to sync chats reliably:
+Chat data is read directly from WeChat's encrypted SQLCipher databases, bypassing UI scraping entirely.
 
-1. **Init**: Close any open chat, press `Home`, then `ctrl+Tab` to focus first item
-2. **Loop** (no chat open - checking focused item):
-   - If focused should skip (File Transfer, Official Accounts, etc.) → `ctrl+Tab`
-   - If focused === lastSelected → done (looped back to start)
-   - Otherwise → note unreadCount, press `space` to select
-3. **Loop** (chat open - persist and move on):
-   - Read chat name from header (unambiguous)
-   - Detect group via `(n)` member count pattern
-   - Extract avatar image hash from selected list item
-   - Persist to DB with noted unreadCount
-   - Emit `sync_progress` event
-   - Click to close, `ctrl+Tab` to next
+### How It Works
 
-**Key features:**
-- Uses AT-SPI states (`SELECTED`, `FOCUSED`) for reliable detection
-- Plan-local state (`planState`) tracks progress without persisting to AppState
-- Decoupled `ctrl+Tab` and `space` for skip handling
-- Matching: image hash first, then exact name (if unique)
+1. **Login plan** detects the WeChat process PID via `pgrep`, resolves the account directory from `/proc/<pid>/fd` symlinks
+2. **Frida-based key extraction** reads AES-256 encryption keys from WeChat process memory (~20s)
+3. Keys are stored in `wechat_keys` table, scoped to `(session_id, account_dir, db_name)`
+4. **Smart key management**: on subsequent logins, existing keys are verified with sqlcipher before re-extracting
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib/wechat-db.ts` | `queryWechatDb()` via sqlcipher CLI, `findAccountDir()`, `findWechatPid()` |
+| `src/lib/wechat-keys.ts` | `extractKeys()`, `storeKeys()`, `needsKeyExtraction()`, `verifyKey()` |
+| `src/lib/wechat-chats.ts` | `listChatsFromWechatDb()`, `getChatByUsername()`, `findChatsByName()` |
+
+### Databases Queried
+
+- `session.db` → `SessionTable` — active chats, sort order, unread counts, last message preview
+- `contact.db` → `contact` — display names, remarks, aliases, avatars
+
+### Gotchas
+
+- `sqlcipher` CLI outputs `ok\n` before JSON (from PRAGMA commands) — must find `[` start index before `JSON.parse`
+- `PRAGMA cipher_compatibility = 4` required for sqlcipher 4.6.1
+- `pgrep -f /usr/bin/wechat` returns multiple PIDs (wrapper + real process) — pick the one with most open fds
+- Stored `wechatPid` goes stale after container rebuild — always fall back to `findWechatPid()`
+- Python extract-keys script exits non-zero if any DB key not found — catch error, read JSON output file anyway (partial success)
 
 ## Current Status
 
 - [x] Deterministic FSM for login flow
-- [x] Effect watchers for QR/phone_confirm/login_success
+- [x] Login plan with post-login key extraction (detect user → extract keys → done)
+- [x] Direct WeChat DB reads via SQLCipher (session.db, contact.db)
+- [x] Smart key management (verify existing keys, only re-extract when needed)
 - [x] Context persistence to SQLite
 - [x] Parent refs in a11y tree + findAncestor helper
 - [x] Frame-scoped click/type actions
 - [x] Per-state commands with shared base (window controls)
-- [x] Post-login maximize via execution loop (action → goal check)
-- [x] Chat list sync via selection-based FSM plan (`syncChatsPlan`)
-- [x] Chat identity matching (image hash first, name fallback)
-- [x] Split chat states: `chat` (no selection) vs `chat_open` (with SELECTED item)
-- [x] AT-SPI states (SELECTED, FOCUSED) in a11y tree
 - [x] Plan-local state for execution-scoped data
 - [ ] Send message via FSM plan
+- [ ] Message history from WeChat DBs (message_0.db)
 - [ ] File sending
