@@ -4,10 +4,9 @@ WeChat Linux SQLCipher Key Extractor
 Extracts encryption keys for all WeChat databases from process memory.
 
 Requirements:
-  - frida-tools: pipx install frida-tools (or pip install frida-tools)
   - sqlcipher: sudo apt install sqlcipher
-  - ptrace enabled: sudo sysctl kernel.yama.ptrace_scope=0
   - WeChat must be running and logged in
+  - Must run as same user that owns the WeChat process
 
 Usage:
   python3 wechat-extract-keys.py [--output db_keys.json]
@@ -19,84 +18,17 @@ import os
 import sys
 import glob
 import argparse
-import tempfile
 import time
 import struct
 
-# ── Frida script: find cipher_ctx, walk pointer chains, print candidates ───
-FRIDA_JS = r"""
-var pattern = "20 00 00 00 10 00 00 00 10 00 00 00 00 10 00 00";
-var ranges = Process.enumerateRanges("rw-");
-var ctxList = [];
-
-for (var i = 0; i < ranges.length; i++) {
-    try {
-        var matches = Memory.scanSync(ranges[i].base, ranges[i].size, pattern);
-        matches.forEach(function(m) { ctxList.push(m.address); });
-    } catch(e) {}
-}
-
-var allKeys = {};
-
-function isKeyLike(arr) {
-    var nonzero = 0, unique = new Set();
-    for (var b = 0; b < 32; b++) {
-        if (arr[b] !== 0) nonzero++;
-        unique.add(arr[b]);
-    }
-    if (nonzero < 20 || unique.size < 10) return false;
-    var printable = 0;
-    for (var b = 0; b < 32; b++) {
-        if (arr[b] >= 0x20 && arr[b] <= 0x7e) printable++;
-    }
-    if (printable > 26) return false;
-    return true;
-}
-
-function tryReadKey(addr) {
-    try {
-        var data = addr.readByteArray(32);
-        var arr = new Uint8Array(data);
-        if (isKeyLike(arr)) {
-            var hex = Array.from(arr).map(function(b) {
-                return ("0" + b.toString(16)).slice(-2);
-            }).join("");
-            allKeys[hex] = 1;
-        }
-    } catch(e) {}
-}
-
-ctxList.forEach(function(ctx) {
-    for (var off = -128; off <= 256; off += 8) {
-        try {
-            var val = ctx.add(off).readPointer();
-            if (!val.isNull() && val.compare(ptr("0x10000")) > 0 &&
-                val.compare(ptr("0xffffffffffff")) < 0) {
-                for (var koff = 0; koff <= 128; koff += 8)
-                    tryReadKey(val.add(koff));
-                for (var poff = 0; poff <= 64; poff += 8) {
-                    try {
-                        var val2 = val.add(poff).readPointer();
-                        if (!val2.isNull() && val2.compare(ptr("0x10000")) > 0 &&
-                            val2.compare(ptr("0xffffffffffff")) < 0) {
-                            tryReadKey(val2);
-                            for (var koff2 = 8; koff2 <= 64; koff2 += 8)
-                                tryReadKey(val2.add(koff2));
-                        }
-                    } catch(e2) {}
-                }
-            }
-        } catch(e) {}
-    }
-    for (var off = -256; off <= 512; off += 8)
-        tryReadKey(ctx.add(off));
-});
-
-console.log("CTX_COUNT:" + ctxList.length);
-var keys = Object.keys(allKeys);
-keys.forEach(function(k) { console.log("KEY:" + k); });
-console.log("DONE");
-"""
+# ── cipher_ctx pattern: SQLCipher uses these fixed parameters ─────────────
+# reserve_sz=32, iv_sz=16, hmac_sz=16, page_sz=4096
+CIPHER_CTX_PATTERN = bytes([
+    0x20, 0x00, 0x00, 0x00,  # reserve_sz = 32
+    0x10, 0x00, 0x00, 0x00,  # iv_sz = 16
+    0x10, 0x00, 0x00, 0x00,  # hmac_sz = 16
+    0x00, 0x10, 0x00, 0x00,  # page_sz = 4096
+])
 
 
 def find_wechat_pid():
@@ -144,38 +76,95 @@ def find_databases(account_dir=None):
         search = os.path.join(base, account_dir, "db_storage/**/*.db")
     else:
         search = os.path.join(base, "*/db_storage/**/*.db")
-    dbs = sorted(glob.glob(search, recursive=True))
+    dbs = sorted(f for f in glob.glob(search, recursive=True) if os.path.getsize(f) > 0)
     return dbs
 
 
 def extract_candidates(pid):
-    """Run frida CLI to extract key candidates."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
-        f.write(FRIDA_JS)
-        js_path = f.name
+    """Scan /proc/pid/mem for cipher_ctx structures and extract key candidates."""
+    regions = []
+    with open(f"/proc/{pid}/maps") as f:
+        for line in f:
+            if "rw-" in line:
+                parts = line.split()
+                addr_range = parts[0].split("-")
+                start = int(addr_range[0], 16)
+                end = int(addr_range[1], 16)
+                regions.append((start, end))
 
-    try:
-        r = subprocess.run(
-            ["frida", "-p", str(pid), "-l", js_path],
-            capture_output=True, text=True, timeout=30,
-            input="exit\n"  # auto-exit the REPL
-        )
-        output = r.stdout + r.stderr
-    except subprocess.TimeoutExpired:
-        output = ""
-    finally:
-        os.unlink(js_path)
+    # Find all cipher_ctx structures
+    ctx_addrs = []
+    with open(f"/proc/{pid}/mem", "rb") as mem:
+        for start, end in regions:
+            size = end - start
+            if size > 100 * 1024 * 1024:
+                continue
+            try:
+                mem.seek(start)
+                data = mem.read(size)
+                pos = 0
+                while True:
+                    idx = data.find(CIPHER_CTX_PATTERN, pos)
+                    if idx == -1:
+                        break
+                    ctx_addrs.append(start + idx)
+                    pos = idx + 1
+            except (OSError, OverflowError):
+                continue
 
-    ctx_count = 0
-    keys = []
-    for line in output.split('\n'):
-        line = line.strip()
-        if line.startswith("CTX_COUNT:"):
-            ctx_count = int(line.split(":")[1])
-        elif line.startswith("KEY:"):
-            keys.append(line[4:])
+    # Walk pointer chains around each ctx to find 32-byte key candidates
+    def is_key_like(raw):
+        if len(raw) != 32:
+            return False
+        nonzero = sum(1 for b in raw if b != 0)
+        unique = len(set(raw))
+        printable = sum(1 for b in raw if 0x20 <= b <= 0x7e)
+        return nonzero >= 20 and unique >= 10 and printable <= 26
 
-    return ctx_count, keys
+    all_keys = set()
+
+    with open(f"/proc/{pid}/mem", "rb") as mem:
+        def _read(addr, size):
+            mem.seek(addr)
+            return mem.read(size)
+
+        def _read_u64(addr):
+            return struct.unpack("<Q", _read(addr, 8))[0]
+
+        def _try_key(addr):
+            try:
+                raw = _read(addr, 32)
+                if is_key_like(raw):
+                    all_keys.add(raw.hex())
+            except Exception:
+                pass
+
+        for ctx in ctx_addrs:
+            # Direct offsets around ctx
+            for off in range(-256, 513, 8):
+                _try_key(ctx + off)
+            # Pointer chasing (depth 1 + 2)
+            for off in range(-128, 257, 8):
+                try:
+                    val = _read_u64(ctx + off)
+                    if val < 0x10000 or val > 0xffffffffffff:
+                        continue
+                    for koff in range(0, 129, 8):
+                        _try_key(val + koff)
+                    for poff in range(0, 65, 8):
+                        try:
+                            val2 = _read_u64(val + poff)
+                            if val2 < 0x10000 or val2 > 0xffffffffffff:
+                                continue
+                            _try_key(val2)
+                            for koff2 in range(8, 65, 8):
+                                _try_key(val2 + koff2)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+    return len(ctx_addrs), list(all_keys)
 
 
 FILTER_LEVELS = [
@@ -219,203 +208,129 @@ def test_key(db_path, key):
     return None
 
 
-# ── Image encryption key extraction (via /proc/pid/mem, no Frida needed) ──────
-# WeChat Linux 4.x (BuildID: 71996acd55aadbb8cb3011344035702609180cf1)
+# ── Image encryption key extraction (via /proc/pid/mem) ───────────────────────
+# Per-build constants: keyed by BuildID prefix (first 8 hex chars).
 
-GOT_CONFIG_OFFSET = 0x8034838       # GOT entry for config singleton pointer
-CONFIG_VALUE_KEY_OFFSET = 0x1F8     # offset of obfuscated key string within ConfigValue
-XOR_BYTE_GLOBAL_OFFSET = 0x8049530  # global: XOR key byte (lazy-init, zero before first use)
+BUILD_PROFILES = {
+    # WeChat Linux 4.x aarch64 (BuildID: 71996acd55aadbb8cb3011344035702609180cf1)
+    "71996acd": {
+        "image_xor_mask": bytes.fromhex(
+            "5e780583f2236b8540bfebb8ab903062"
+            "fc5a071a767de41a637075835ebfac1e"
+        ),
+    },
+    # WeChat Linux 4.x x86_64 (BuildID: 20420b6d58ea31c6d8a9f3f241fc95773dd032f5)
+    "20420b6d": {
+        "image_xor_mask": bytes.fromhex(
+            "5155035200510d06040d0c5154010655"
+            "5602505354035e500656000c04005e53"
+        ),
+    },
+}
 
-IMAGE_XOR_MASK = bytes.fromhex(
-    "5e780583f2236b8540bfebb8ab903062"
-    "fc5a071a767de41a637075835ebfac1e"
-)
 
+def get_build_id(pid):
+    """Read the WeChat binary's BuildID.
 
-def get_wechat_module_base(pid):
-    """Find the base address of the 'wechat' module from /proc/pid/maps."""
+    Uses /proc/pid/maps to find the actual binary path, since /proc/pid/exe
+    may point to a translator (e.g. Rosetta) instead of the real binary.
+    """
+    wechat_path = None
     with open(f"/proc/{pid}/maps") as f:
         for line in f:
-            if "/wechat" in line:
-                return int(line.split("-")[0], 16)
-    raise RuntimeError("wechat module not found in /proc/pid/maps")
-
-
-def read_mem(pid, addr, size):
-    """Read `size` bytes from process memory at `addr`."""
-    with open(f"/proc/{pid}/mem", "rb") as f:
-        f.seek(addr)
-        return f.read(size)
-
-
-def read_u64(pid, addr):
-    return struct.unpack("<Q", read_mem(pid, addr, 8))[0]
-
-
-def read_u8(pid, addr):
-    return read_mem(pid, addr, 1)[0]
-
-
-def read_std_string(pid, addr):
-    """Read a libc++ std::string (SSO format) from memory.
-
-    Layout:
-    - byte 0: flag byte. If bit 0 set -> "long" (heap-allocated).
-      Otherwise -> "short" (inline, length = flag >> 1).
-    - Long: bytes 8-15 = length (u64), bytes 16-23 = data pointer (u64)
-    - Short: bytes 1..length = inline data
-    """
-    fb = read_u8(pid, addr)
-    if fb & 1:  # long string
-        length = read_u64(pid, addr + 8)
-        data_ptr = read_u64(pid, addr + 16)
-        return read_mem(pid, data_ptr, length)
-    else:  # short string (SSO)
-        length = fb >> 1
-        if length == 0:
-            return b""
-        return read_mem(pid, addr + 1, length)
-
-
-def deobfuscate_image_key(obfuscated):
-    """XOR the obfuscated key bytes with the known mask."""
-    result = bytearray(len(obfuscated))
-    for i in range(len(obfuscated)):
-        result[i] = obfuscated[i] ^ IMAGE_XOR_MASK[i % len(IMAGE_XOR_MASK)]
-    return result.decode("ascii")
-
-
-def extract_image_aes_key(pid):
-    """Extract the image AES key from WeChat's config singleton in memory.
-
-    Walks the config object at depth 2, looking for a std::string of length 32
-    at offset +0x1F8 that XOR-deobfuscates to a valid 32-char hex string.
-
-    Returns: 32-char hex string (e.g. "2db48e820850a7cff445fb86ce85a4fa")
-    """
-    base = get_wechat_module_base(pid)
-
-    config_ptr = read_u64(pid, base + GOT_CONFIG_OFFSET)
-    if config_ptr == 0:
-        raise RuntimeError("Config singleton is NULL")
-
-    # Scan depth-1 pointers in config object
-    for off1 in range(0, 0x800, 8):
-        try:
-            ptr1 = read_u64(pid, config_ptr + off1)
-            if ptr1 == 0 or ptr1 < 0x1000:
-                continue
-            # Scan depth-2 pointers
-            for off2 in range(0, 0x200, 8):
-                try:
-                    ptr2 = read_u64(pid, ptr1 + off2)
-                    if ptr2 == 0 or ptr2 < 0x1000:
-                        continue
-                    try:
-                        raw = read_std_string(pid, ptr2 + CONFIG_VALUE_KEY_OFFSET)
-                        if len(raw) == 32:
-                            decoded = deobfuscate_image_key(raw)
-                            if all(c in "0123456789abcdef" for c in decoded):
-                                return decoded
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    raise RuntimeError("Could not find AES key in config object. "
-                       "Make sure WeChat has sent/received at least one image.")
-
-
-def extract_image_xor_byte(pid):
-    """Read the XOR byte directly from WeChat's global config memory.
-
-    Returns the byte value, or None if not yet initialized (zero).
-    """
-    base = get_wechat_module_base(pid)
-    xor_byte = read_u8(pid, base + XOR_BYTE_GLOBAL_OFFSET)
-    if xor_byte == 0:
-        return None  # not yet initialized (lazy-init)
-    return xor_byte
-
-
-def find_xor_byte_from_dat(dat_path, aes_key_16):
-    """Derive the XOR byte from a .dat file by AES-decrypting the head
-    and checking known image trailers (JPEG FFD9, PNG IEND)."""
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.primitives import padding
-
-    with open(dat_path, "rb") as f:
-        dat = f.read()
-
-    if dat[:6] != bytes.fromhex("070856320807"):
-        raise ValueError("Not a WeChat .dat file")
-
-    enc_chunk = int.from_bytes(dat[6:10], "little")
-    aes_ct = dat[15:15 + enc_chunk + 16]
-
-    cipher = Cipher(algorithms.AES(aes_key_16), modes.ECB())
-    dec = cipher.decryptor()
-    dec_padded = dec.update(aes_ct) + dec.finalize()
-    unpadder = padding.PKCS7(128).unpadder()
-    dec_head = unpadder.update(dec_padded) + unpadder.finalize()
-
-    # JPEG: last 2 bytes are FF D9
-    if dec_head[:2] == b"\xff\xd8":
-        c1 = dat[-2] ^ 0xFF
-        c2 = dat[-1] ^ 0xD9
-        if c1 == c2:
-            return c1
-
-    # PNG: last 8 bytes are IEND chunk (49 45 4E 44 AE 42 60 82)
-    if dec_head[:4] == b"\x89PNG":
-        expected = bytes([0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82])
-        tail = dat[-8:]
-        xb = tail[0] ^ expected[0]
-        if all(tail[i] ^ xb == expected[i] for i in range(8)):
-            return xb
-
-    raise RuntimeError("Could not determine XOR byte from file trailer")
-
-
-def find_any_dat_file(account_dir):
-    """Find any full-size .dat image file for the account."""
-    for candidate in ["~/xwechat_files", "~/Documents/xwechat_files"]:
-        base = os.path.expanduser(candidate)
-        search = os.path.join(base, account_dir, "msg/attach/**/Img/*.dat")
-        files = glob.glob(search, recursive=True)
-        for f in files:
-            if not f.endswith(("_t.dat", "_h.dat", "_b.dat")):
-                return f
+            if "/wechat" in line and line.strip().endswith("/wechat"):
+                wechat_path = line.split()[-1]
+                break
+    if not wechat_path:
+        return None
+    r = subprocess.run(["readelf", "-n", wechat_path], capture_output=True, text=True)
+    for line in r.stdout.split("\n"):
+        if "Build ID:" in line:
+            return line.split("Build ID:")[1].strip()
     return None
 
 
-def extract_image_keys(pid, account_dir):
-    """Extract image encryption keys from memory.
+def get_build_profile(pid):
+    """Detect the WeChat build and return its memory layout constants."""
+    build_id = get_build_id(pid)
+    if build_id:
+        prefix = build_id[:8]
+        if prefix in BUILD_PROFILES:
+            print(f"Build: {build_id[:16]}... ({prefix})")
+            return BUILD_PROFILES[prefix]
+        print(f"WARNING: Unknown BuildID {build_id}. Image key extraction may fail.")
+    # Fall back to first profile (aarch64)
+    return next(iter(BUILD_PROFILES.values()))
 
-    AES key is always extracted from config singleton.
-    XOR byte is attempted from memory (may be zero if lazy-init not triggered).
-    If XOR byte unavailable, it will be derived lazily at media query time.
 
-    Returns: dict with "_image_aes" and optionally "_image_xor".
+def extract_image_aes_key(pid, profile):
+    """Extract the image AES key from WeChat's process memory.
+
+    Scans all RW memory for the obfuscated key using the build-specific XOR mask.
+    The key is 32 bytes where byte[i] ^ mask[i] produces a hex char (0-9a-f).
+    Uses regex (C-level) for fast initial filtering of first 4 bytes, then
+    verifies the remaining 28 bytes in Python. False positive probability
+    is (16/256)^32 ≈ 3e-39, so any match is the real key.
+
+    Returns: 32-char hex string (e.g. "2db48e820850a7cff445fb86ce85a4fa")
+    """
+    import re
+    mask = profile["image_xor_mask"]
+    hex_bytes = list(range(0x30, 0x3a)) + list(range(0x61, 0x67))
+    valid_at = [set(h ^ mask[i] for h in hex_bytes) for i in range(32)]
+
+    # Build regex for first 4 bytes (C-speed filter, eliminates >99% of positions)
+    def _byte_class(valid_set):
+        return b"[" + b"".join(re.escape(bytes([b])) for b in sorted(valid_set)) + b"]"
+    rx = re.compile(b"".join(_byte_class(valid_at[i]) for i in range(4)))
+
+    regions = []
+    with open(f"/proc/{pid}/maps") as f:
+        for line in f:
+            if "rw-" in line:
+                parts = line.split()
+                addr_range = parts[0].split("-")
+                start = int(addr_range[0], 16)
+                end = int(addr_range[1], 16)
+                regions.append((start, end))
+
+    with open(f"/proc/{pid}/mem", "rb") as mem:
+        for start, end in regions:
+            size = end - start
+            if size > 100 * 1024 * 1024:
+                continue
+            try:
+                mem.seek(start)
+                data = mem.read(size)
+            except (OSError, OverflowError):
+                continue
+            for m in rx.finditer(data):
+                i = m.start()
+                if i + 32 > len(data):
+                    break
+                raw = data[i:i + 32]
+                if all(raw[j] in valid_at[j] for j in range(4, 32)):
+                    deobf = bytes(raw[j] ^ mask[j] for j in range(32))
+                    decoded = deobf.decode("ascii")
+                    if len(set(decoded)) >= 8:
+                        return decoded
+
+    raise RuntimeError("Could not find AES key in memory. "
+                       "Make sure WeChat has sent/received at least one image.")
+
+
+def extract_image_keys(pid, profile):
+    """Extract image AES key from memory via obfuscated-pattern scan.
+
+    XOR byte is not extracted here — it is derived lazily at image access time.
+
+    Returns: dict with "_image_aes".
     """
     print("\nExtracting image encryption keys from memory...")
-    result = {}
-
-    aes_key_hex = extract_image_aes_key(pid)
-    result["_image_aes"] = aes_key_hex
+    aes_key_hex = extract_image_aes_key(pid, profile)
     print(f"  AES key: {aes_key_hex[:16]}... (32-char hex string)")
-
-    # Try memory for XOR byte (may be 0 if lazy-init not triggered)
-    xor_byte = extract_image_xor_byte(pid)
-    if xor_byte is not None:
-        result["_image_xor"] = f"{xor_byte:02x}"
-        print(f"  XOR byte: 0x{xor_byte:02x} (from memory)")
-    else:
-        print("  XOR byte: not yet initialized (will derive on first image access)")
-
-    return result
+    print("  XOR byte: derived lazily on first image access")
+    return {"_image_aes": aes_key_hex}
 
 
 def main():
@@ -444,6 +359,8 @@ def main():
         print("ERROR: No WeChat databases found in ~/Documents/xwechat_files/")
         sys.exit(1)
     print(f"Databases: {len(databases)}")
+
+    profile = get_build_profile(pid)
 
     print("Extracting key candidates from memory...")
     ctx_count, raw_keys = extract_candidates(pid)
@@ -516,9 +433,9 @@ def main():
         "keys": {name: info["key"] for name, info in sorted(results.items())},
     }
 
-    # Image encryption keys (from process memory, not Frida)
+    # Image encryption keys (from process memory)
     try:
-        image_keys = extract_image_keys(pid, account_dir)
+        image_keys = extract_image_keys(pid, profile)
         output["keys"].update(image_keys)
     except Exception as e:
         print(f"  Image key extraction failed: {e}")

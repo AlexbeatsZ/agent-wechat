@@ -301,6 +301,13 @@ function deriveXorByte(datBuf: Buffer, decHead: Buffer): number | null {
     if (expected.every((e, i) => (datBuf[tailStart + i]! ^ xb) === e)) return xb;
   }
 
+  // GIF: last 2 bytes are 00 3B (empty sub-block + trailer)
+  if (decHead.subarray(0, 4).toString("ascii") === "GIF8") {
+    const c1 = datBuf[datBuf.length - 2]! ^ 0x00;
+    const c2 = datBuf[datBuf.length - 1]! ^ 0x3B;
+    if (c1 === c2) return c1;
+  }
+
   return null;
 }
 

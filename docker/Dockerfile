@@ -29,21 +29,9 @@ RUN apt-get update && apt-get install -y \
     # New packages for agent-server
     xclip \
     sqlite3 \
-    # DB key extraction
-    python3-pip libssl-dev \
+    # SQLCipher build needs libssl-dev
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# ============================================
-# Frida + SQLCipher 4 (for WeChat DB key extraction)
-# ============================================
-RUN pip3 install frida-tools cryptography
-RUN cd /tmp \
-    && curl -L https://github.com/sqlcipher/sqlcipher/archive/refs/tags/v4.6.1.tar.gz | tar xz \
-    && cd sqlcipher-4.6.1 \
-    && ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_CRYPTO_OPENSSL" LDFLAGS="-lcrypto" \
-    && make -j$(nproc) \
-    && cp sqlcipher /usr/local/bin/sqlcipher \
-    && cd / && rm -rf /tmp/sqlcipher-4.6.1
 
 # ============================================
 # Node.js 22 + pnpm + build tools (for native modules)
@@ -52,6 +40,17 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs python3 make g++ \
     && npm install -g pnpm node-gyp \
     && rm -rf /var/lib/apt/lists/*
+
+# ============================================
+# SQLCipher 4 (for WeChat DB key extraction)
+# ============================================
+RUN cd /tmp \
+    && curl -L https://github.com/sqlcipher/sqlcipher/archive/refs/tags/v4.6.1.tar.gz | tar xz \
+    && cd sqlcipher-4.6.1 \
+    && ./configure --enable-tempstore=yes CFLAGS="-DSQLITE_HAS_CODEC -DSQLCIPHER_CRYPTO_OPENSSL" LDFLAGS="-lcrypto" \
+    && make -j$(nproc) \
+    && cp sqlcipher /usr/local/bin/sqlcipher \
+    && cd / && rm -rf /tmp/sqlcipher-4.6.1
 
 # ============================================
 # X11 socket directory

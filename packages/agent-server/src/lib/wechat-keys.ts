@@ -54,11 +54,10 @@ export function extractKeys(wechatPid: number): Record<string, string> {
         fs.readFileSync(outPath, "utf-8")
       );
       const dbKeys = Object.keys(output.keys).filter(k => !k.startsWith("_"));
-      const hasImageKeys = !!output.keys["_image_aes"] && !!output.keys["_image_xor"];
-      console.log(`[wechat-keys] Extracted ${dbKeys.length} DB keys, image keys: ${hasImageKeys ? "yes" : "no"}`);
-      if (hasImageKeys) {
+      const hasImageAes = !!output.keys["_image_aes"];
+      console.log(`[wechat-keys] Extracted ${dbKeys.length} DB keys, image AES key: ${hasImageAes ? "yes" : "no"}`);
+      if (hasImageAes) {
         console.log(`[wechat-keys]   _image_aes: ${output.keys["_image_aes"]!.slice(0, 16)}...`);
-        console.log(`[wechat-keys]   _image_xor: 0x${output.keys["_image_xor"]}`);
       }
       return output.keys;
     }

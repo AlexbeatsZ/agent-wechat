@@ -39,16 +39,16 @@ Keys exist only in WeChat's process memory at runtime (not on disk). They are **
 
 ### How We Extract
 
-During login key extraction (`wechat-extract-keys.py`), we read `/proc/pid/mem` directly (no Frida needed for image keys):
+During login key extraction (`wechat-extract-keys.py`), we read `/proc/pid/mem` directly (no Frida needed):
 
-1. **AES key**: Read the config singleton pointer from `GOT[0x8034838]`, walk depth-2 pointers looking for a `std::string` of length 32 at offset `+0x1F8`, XOR-deobfuscate with a compile-time 32-byte mask
-2. **XOR byte**: Read directly from `base + 0x8049530` (memory-first). If zero (not yet initialized), fall back to deriving from a `.dat` file by checking JPEG/PNG trailers
+1. **AES key**: Regex-based memory scan of all RW regions. The key is stored XOR-obfuscated with a per-build 32-byte mask (`IMAGE_XOR_MASK`). Since the plaintext must be 32 hex characters (0-9, a-f), each byte position has only 16 valid obfuscated values out of 256. We build a regex matching the first 4 obfuscated bytes (C-level speed), then verify the remaining 28 in Python. False positive probability is (16/256)^32 ≈ 3e-39 — any match is the real key.
+2. **XOR byte**: Derived lazily at image access time (not during key extraction). On first image decryption, the AES-decrypted head reveals the image format, and the XOR byte is recovered by XOR-ing the file's tail bytes against known trailers (JPEG `FF D9`, PNG IEND `AE 42 60 82`, GIF `00 3B`). The result is persisted for subsequent queries.
 
 ### Storage
 
 Image keys are stored in the `wechat_keys` table alongside DB encryption keys, using reserved `dbName` values:
-- `_image_aes` — 32-char hex string
-- `_image_xor` — 2-char hex byte (e.g. `"85"`)
+- `_image_aes` — 32-char hex string (written by `wechat-extract-keys.py`)
+- `_image_xor` — 2-char hex byte (e.g. `"85"`) — derived lazily on first image access, not during extraction
 
 ## File Locations
 
@@ -93,14 +93,20 @@ XOR byte is derived lazily from the first decrypted JPEG (via FFD9 trailer) and 
 
 ## Binary Version Dependency
 
-The memory offsets (`GOT_CONFIG_OFFSET`, `XOR_BYTE_GLOBAL_OFFSET`, `IMAGE_XOR_MASK`) are specific to:
-- WeChat Linux 4.x for aarch64
-- BuildID: `71996acd55aadbb8cb3011344035702609180cf1`
+The `IMAGE_XOR_MASK` is a compile-time constant that differs per binary build. Known masks are stored in `BUILD_PROFILES` in `wechat-extract-keys.py`, keyed by the first 8 hex chars of the ELF BuildID:
 
-These **will change** with binary updates. The decryption algorithm itself (AES-ECB + XOR) and the `.dat` file format are likely stable across versions.
+| BuildID prefix | Architecture | IMAGE_XOR_MASK |
+|---------------|-------------|----------------|
+| `71996acd` | aarch64 | `5e780583f2236b85...` |
+| `20420b6d` | x86_64 | `5155035200510d06...` |
+
+To add a new build: extract the mask by XOR-ing the known obfuscated bytes (from memory) with the known plaintext key (from a successful decryption). Only the `IMAGE_XOR_MASK` is needed — no other offsets required.
+
+The decryption algorithm itself (AES-ECB + XOR) and the `.dat` file format are stable across versions.
 
 ## Verified Against
 
 - JPEG, PNG, and WXGF images across multiple chats
+- Both aarch64 and x86_64 (Rosetta 2) builds
 - XOR byte derivation from JPEG trailer (0x85 confirmed for test account)
 - WXGF → thumbnail fallback returns valid JPEG
