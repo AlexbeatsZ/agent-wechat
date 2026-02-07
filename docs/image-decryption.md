@@ -100,9 +100,98 @@ The `IMAGE_XOR_MASK` is a compile-time constant that differs per binary build. K
 | `71996acd` | aarch64 | `5e780583f2236b85...` |
 | `20420b6d` | x86_64 | `5155035200510d06...` |
 
-To add a new build: extract the mask by XOR-ing the known obfuscated bytes (from memory) with the known plaintext key (from a successful decryption). Only the `IMAGE_XOR_MASK` is needed — no other offsets required.
-
 The decryption algorithm itself (AES-ECB + XOR) and the `.dat` file format are stable across versions.
+
+### Discovering IMAGE_XOR_MASK for a new build
+
+When WeChat updates and the BuildID changes, you need to extract a new mask. There are three approaches, from easiest to most involved.
+
+#### Approach A: Shortcut (if you already have the plaintext key)
+
+If the same account was previously running on a known build, the AES key is per-account and unchanged. You already know the plaintext. Just find the obfuscated copy and XOR:
+
+1. Read the obfuscated key from the config singleton in BSS (pointer walk from GOT, offset `+0x1F8` for std::string)
+2. Compute: `mask[i] = obfuscated[i] ^ plaintext_ascii[i]` for all 32 bytes
+3. Verify the mask appears in `.rodata`: `objdump -s -j .rodata /opt/wechat/wechat | grep "<first 4 bytes hex>"`
+
+This is how the amd64 mask was discovered — the key was already known from the aarch64 build.
+
+#### Approach B: Static/dynamic reverse engineering
+
+This is how the aarch64 mask was originally found. The mask is a 32-byte compile-time constant in `.rodata`, used by a deobfuscation function:
+
+```
+# The deobfuscation function does:
+#   load ptr from GOT (config singleton)
+#   walk 2 levels of pointers
+#   read std::string at fixed offset (+0x1F8)
+#   XOR each byte with .rodata constant
+#   check if result is valid hex chars [0-9a-f]
+```
+
+**Dynamic**: Hook the image encrypt orchestrator (e.g. `0x568a040` on aarch64). Set a breakpoint where the XOR loop loads bytes from a fixed `.rodata` address. The source operand is the mask.
+
+**Static**: Disassemble and find the XOR loop pattern:
+```asm
+# x86_64 pattern:
+movzx eax, byte [rsi + rcx]    ; load obfuscated byte
+xor   al, byte [rdi + rcx]     ; XOR with mask byte from .rodata
+; ...compare against '0'-'9', 'a'-'f'...
+```
+The mask address (`rdi` source) points into `.rodata`. Dump 32 bytes from that address.
+
+#### Approach C: Brute-force memory scan (no prior key, no RE needed)
+
+Requires a running WeChat instance (new binary), logged into any account, with at least one image sent or received.
+
+**Step 1: Find the plaintext AES key.**
+
+Scan all RW regions of `/proc/pid/mem` for 32-byte sequences where every byte is an ASCII hex char (`0x30-0x39`, `0x61-0x66`). Test each as AES-128-ECB key (first 16 ASCII bytes) against any `.dat` file. Valid image header (JPEG `FF D8`, PNG `89 50 4E 47`) = correct key.
+
+```python
+hex_chars = set(range(0x30, 0x3a)) | set(range(0x61, 0x67))
+for region in rw_regions:
+    data = read_region(region)
+    for i in range(len(data) - 31):
+        if all(data[i+j] in hex_chars for j in range(32)):
+            candidate = data[i:i+32]
+            if aes_ecb_decrypt(dat_file, candidate[:16]) starts with known magic:
+                plaintext_key = candidate  # found it
+```
+
+Slow (~minutes) but only needs to be done once per build.
+
+**Step 2: Find the obfuscated key.**
+
+The obfuscated key lives in the binary's BSS/data segment (not heap). Filter `/proc/pid/maps` for regions backed by the `wechat` binary. For each 32-byte window, XOR with the known plaintext ASCII bytes.
+
+```python
+plaintext_ascii = plaintext_key.encode("ascii")  # 32 bytes
+for region in wechat_binary_regions:  # from /proc/pid/maps
+    data = read_region(region)
+    for i in range(len(data) - 31):
+        candidate_mask = bytes(data[i+j] ^ plaintext_ascii[j] for j in range(32))
+        if candidate_mask != b'\x00' * 32:  # not the plaintext itself
+            masks.append(candidate_mask)
+```
+
+**Step 3: Verify the mask.**
+
+Use each candidate mask with the regex scan algorithm (`extract_image_aes_key`). The correct mask will re-discover the plaintext key. Wrong masks find nothing (false positive probability ~3e-39).
+
+```python
+found_key = extract_image_aes_key(pid, {"image_xor_mask": candidate_mask})
+assert found_key == plaintext_key_string
+```
+
+Optionally confirm the mask exists in `.rodata`:
+```bash
+objdump -s -j .rodata /opt/wechat/wechat | grep "<first 4 bytes hex>"
+```
+
+#### Adding to BUILD_PROFILES
+
+Get the BuildID with `readelf -n /opt/wechat/wechat`, take the first 8 hex chars as the key, and add the verified mask to `BUILD_PROFILES` in `wechat-extract-keys.py`.
 
 ## Verified Against
 
