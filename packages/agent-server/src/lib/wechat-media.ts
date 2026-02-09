@@ -277,6 +277,13 @@ export function getVoiceData(
 /**
  * Decode the head of a .dat file to detect image type.
  */
+function alignedAesSize(encChunkSize: number): number {
+  const remainder = encChunkSize % 16;
+  return remainder === 0
+    ? encChunkSize + 16          // full PKCS7 padding block
+    : encChunkSize + (16 - remainder);
+}
+
 function decryptDatHead(datBuf: Buffer, aesKeyHex: string): { decHead: Buffer; encChunkSize: number } {
   if (!datBuf.subarray(0, 6).equals(DAT_MAGIC)) {
     throw new Error("Not a WeChat .dat file");
@@ -285,7 +292,7 @@ function decryptDatHead(datBuf: Buffer, aesKeyHex: string): { decHead: Buffer; e
   const encChunkSize = datBuf.readUInt32LE(6);
   const aesKey = Buffer.from(aesKeyHex.slice(0, 16), "ascii");
 
-  const aesCt = datBuf.subarray(15, 15 + encChunkSize + 16);
+  const aesCt = datBuf.subarray(15, 15 + alignedAesSize(encChunkSize));
   const decipher = crypto.createDecipheriv("aes-128-ecb", aesKey, null);
   const decHead = Buffer.concat([decipher.update(aesCt), decipher.final()]);
 
@@ -327,14 +334,23 @@ function deriveXorByte(datBuf: Buffer, decHead: Buffer): number | null {
 function decryptDat(datBuf: Buffer, aesKeyHex: string, xorByte: number): Buffer {
   const { decHead, encChunkSize } = decryptDatHead(datBuf, aesKeyHex);
 
-  // XOR decrypt remaining bytes
-  const tail = datBuf.subarray(15 + encChunkSize + 16);
-  const decTail = Buffer.alloc(tail.length);
-  for (let i = 0; i < tail.length; i++) {
-    decTail[i] = tail[i]! ^ xorByte;
+  const xorSize = datBuf.readUInt32LE(10);
+  const aesCtEnd = 15 + alignedAesSize(encChunkSize);
+  const remaining = datBuf.subarray(aesCtEnd);
+
+  // xorSize = number of bytes at the END of remaining that are XOR'd.
+  // Bytes before that are raw (unencrypted). Today xorSize == remaining.length,
+  // but the format allows a raw middle section for large files.
+  const rawLength = remaining.length - xorSize;
+  const rawData = remaining.subarray(0, rawLength);
+  const xorData = remaining.subarray(rawLength);
+
+  const decTail = Buffer.alloc(xorData.length);
+  for (let i = 0; i < xorData.length; i++) {
+    decTail[i] = xorData[i]! ^ xorByte;
   }
 
-  return Buffer.concat([decHead, decTail]);
+  return Buffer.concat([decHead, rawData, decTail]);
 }
 
 /**
