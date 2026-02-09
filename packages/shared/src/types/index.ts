@@ -108,6 +108,17 @@ export interface GetChatParams {
   id: string;
 }
 
+export interface OpenChatParams {
+  chatId: string;
+}
+
+export interface OpenChatResult {
+  ok: boolean;
+  username?: string;
+  index?: number;
+  error?: string;
+}
+
 // ============================================
 // MESSAGES (from WeChat's encrypted DBs)
 // ============================================

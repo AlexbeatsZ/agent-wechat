@@ -11,6 +11,7 @@ import type {
   Status,
   Session,
   LoginSubscriptionEvent,
+  OpenChatResult,
 } from "@thisnick/agent-wechat-shared";
 
 export interface ClientOptions {
@@ -31,6 +32,7 @@ export interface Client {
     list: { query: (input: { limit?: number; offset?: number }) => Promise<Chat[]> };
     get: { query: (input: { id: string }) => Promise<Chat | null> };
     find: { query: (input: { name: string }) => Promise<Chat[]> };
+    open: { mutate: (input: { chatId: string }) => Promise<OpenChatResult> };
   };
   messages: {
     list: { query: (input: { chatId: string; limit?: number; offset?: number }) => Promise<Message[]> };

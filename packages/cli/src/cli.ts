@@ -198,6 +198,13 @@ chatsCmd
     await cmdFind(getClient(), name);
   });
 
+chatsCmd
+  .command("open <chatId>")
+  .description("Open a chat in WeChat UI (triggers media downloads + clears unread)")
+  .action(async (chatId: string) => {
+    await cmdChatOpen(getClient(), chatId);
+  });
+
 // ============================================
 // Messages Commands
 // ============================================
@@ -513,6 +520,18 @@ async function cmdFind(client: Client, name: string) {
   console.log(`Found ${chats.length} matching chats:\n`);
   for (const chat of chats) {
     console.log(`  ${chat.id}: ${chat.name}`);
+  }
+}
+
+async function cmdChatOpen(client: Client, chatId: string) {
+  console.log(`Opening chat ${chatId}...`);
+  const result = await client.chats.open.mutate({ chatId });
+
+  if (result.ok) {
+    console.log(`Chat opened: ${result.username} (index ${result.index})`);
+  } else {
+    console.error(`Failed: ${result.error}`);
+    process.exit(1);
   }
 }
 

@@ -146,6 +146,17 @@ export const getChatParamsSchema = z.object({
   id: z.string().min(1),
 });
 
+export const openChatParamsSchema = z.object({
+  chatId: z.string().min(1),
+});
+
+export const openChatResultSchema = z.object({
+  ok: z.boolean(),
+  username: z.string().optional(),
+  index: z.number().int().optional(),
+  error: z.string().optional(),
+});
+
 // ============================================
 // MESSAGES (from WeChat's encrypted DBs)
 // ============================================
@@ -212,6 +223,8 @@ export type Chat = z.infer<typeof chatSchema>;
 export type ListChatsParams = z.infer<typeof listChatsParamsSchema>;
 export type FindChatParams = z.infer<typeof findChatParamsSchema>;
 export type GetChatParams = z.infer<typeof getChatParamsSchema>;
+export type OpenChatParams = z.infer<typeof openChatParamsSchema>;
+export type OpenChatResult = z.infer<typeof openChatResultSchema>;
 export type Message = z.infer<typeof messageSchema>;
 export type ListMessagesParams = z.infer<typeof listMessagesParamsSchema>;
 export type SendParams = z.infer<typeof sendParamsSchema>;

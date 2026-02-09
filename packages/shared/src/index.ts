@@ -23,6 +23,8 @@ export {
   listChatsParamsSchema,
   findChatParamsSchema,
   getChatParamsSchema,
+  openChatParamsSchema,
+  openChatResultSchema,
   // Message schemas
   messageSchema,
   listMessagesParamsSchema,

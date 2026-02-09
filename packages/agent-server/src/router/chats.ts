@@ -3,10 +3,12 @@ import {
   listChatsParamsSchema,
   findChatParamsSchema,
   getChatParamsSchema,
+  openChatParamsSchema,
 } from "@thisnick/agent-wechat-shared";
 import type { Chat } from "@thisnick/agent-wechat-shared";
 import { getStoredKeys } from "../lib/wechat-keys.js";
 import { listChatsFromWechatDb, getChatByUsername, findChatsByName } from "../lib/wechat-chats.js";
+import { openChat } from "../lib/chat-select.js";
 
 export const chatsRouter = router({
   /**
@@ -52,5 +54,14 @@ export const chatsRouter = router({
       if (!keys["session.db"] || !keys["contact.db"]) return [];
 
       return findChatsByName(session.loggedInUser, keys, input.name);
+    }),
+
+  /**
+   * Open a chat in WeChat UI (triggers media downloads + clears unread)
+   */
+  open: publicProcedure
+    .input(openChatParamsSchema)
+    .mutation(async ({ input, ctx }) => {
+      return await openChat(input.chatId, { session: ctx.session });
     }),
 });

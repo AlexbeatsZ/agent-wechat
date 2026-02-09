@@ -375,11 +375,24 @@ ELEM_SIZE      = 16          # unlikely to change
 - **Output redirect**: Use `> file 2>&1` (not `2>&1 > file`).
 - **Frida from pipx**: Use full path or `shutil.which("frida")` to find the binary.
 
+## Official account filtering
+
+The session vector in memory contains **all** sessions, including WeChat official/service
+accounts (`gh_` prefix). However, `selectSession()` indexes only non-official sessions.
+Passing a raw vector index directly causes an index shift — the wrong chat gets selected.
+
+**Fix**: Filter out official accounts (matching `^gh_[0-9a-f]+$`) from the enumerated
+list and re-number from 0 before passing the index to the hook.
+
+This is implemented in `docker/tools/chat-select.py` (the production version). The
+`auto_select.py` script in this directory is the original research prototype and does
+**not** include this fix.
+
 ## Files
 
 ```
 chat-selection/
-├── auto_select.py              # Main script (aarch64 + x86_64) — run this
+├── auto_select.py              # Research prototype (aarch64 + x86_64)
 ├── GUIDE.md                    # This file
 └── discovery/                  # Scripts for finding offsets in new binaries
     ├── 01_find_vtables.js      # Find class name strings + vtable addresses (Approach B)
@@ -387,4 +400,10 @@ chat-selection/
     ├── 03_hook_light.js        # Ultra-light counter hooks → click-responsive funcs (Approach B)
     ├── 04_hook_targeted.js     # Detailed hooks with backtraces → call chain (Approach B)
     └── 05_disasm_chain.js      # Disassemble call chain → function offsets (both approaches)
+
+Production version: docker/tools/chat-select.py
+  - BUILD_PROFILES for multi-arch (keyed by ELF BuildID prefix)
+  - a11y tree for click targets (no hardcoded coordinates)
+  - Official account filtering (gh_ index shift fix)
+  - JSON output for integration with agent-server
 ```
