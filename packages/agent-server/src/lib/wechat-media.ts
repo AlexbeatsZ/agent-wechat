@@ -223,7 +223,10 @@ export function getVoiceData(
   localId: number,
 ): MediaResult {
   const mediaKey = keys["media_0.db"];
-  if (!mediaKey) return { type: "unsupported", format: "", filename: "" };
+  if (!mediaKey) {
+    console.error(`[media] No media_0.db key found for voice lookup`);
+    return { type: "unsupported", format: "", filename: "" };
+  }
 
   const mediaDbPath = getDbPath(accountDir, "media_0.db");
 
@@ -234,7 +237,10 @@ export function getVoiceData(
     `SELECT rowid FROM Name2Id WHERE user_name = '${chatId.replace(/'/g, "''")}';`,
   ) as unknown as { rowid: number }[];
 
-  if (nameRows.length === 0) return { type: "unsupported", format: "", filename: "" };
+  if (nameRows.length === 0) {
+    console.error(`[media] Voice: chatId '${chatId}' not found in Name2Id`);
+    return { type: "unsupported", format: "", filename: "" };
+  }
   const chatNameId = nameRows[0].rowid;
 
   // Fetch voice data as hex
@@ -248,6 +254,7 @@ export function getVoiceData(
   ) as unknown as { hex_data: string; size: number }[];
 
   if (voiceRows.length === 0 || !voiceRows[0].hex_data) {
+    console.error(`[media] Voice: no data in VoiceInfo for chatNameId=${chatNameId}, localId=${localId}`);
     return { type: "unsupported", format: "", filename: "" };
   }
 
@@ -714,12 +721,19 @@ export function getMessageMedia(
   onXorDerived?: (xorByte: number) => void,
 ): MediaResult {
   const msgKey = keys["message_0.db"];
-  if (!msgKey) return { type: "unsupported", format: "", filename: "" };
+  if (!msgKey) {
+    console.error(`[media] No message_0.db key found`);
+    return { type: "unsupported", format: "", filename: "" };
+  }
 
   const msg = lookupMessage(accountDir, msgKey, chatId, localId);
-  if (!msg) return { type: "unsupported", format: "", filename: "" };
+  if (!msg) {
+    console.error(`[media] Message not found: chatId=${chatId}, localId=${localId}`);
+    return { type: "unsupported", format: "", filename: "" };
+  }
 
   const base = msg.local_type & 0xFFFFFFFF;
+  console.log(`[media] Message ${localId}: type=${base}, chatId=${chatId}`);
 
   switch (base) {
     case 3:  // image

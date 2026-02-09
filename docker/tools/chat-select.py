@@ -522,7 +522,6 @@ Interceptor.attach(addr, {{
             break
 
     kill_frida(proc)
-    time.sleep(1)
 
     redirected = any("REDIRECT" in l for l in lines)
     if not redirected:
