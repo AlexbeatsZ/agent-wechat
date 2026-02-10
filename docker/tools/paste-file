@@ -1,0 +1,35 @@
+#!/bin/bash
+# Paste a file via clipboard (as file URI)
+# Usage: paste-file <file-path>
+#
+# Sets clipboard to text/uri-list so Qt apps treat it as a file paste.
+
+set -euo pipefail
+
+if [ -z "${1:-}" ]; then
+  echo "Usage: paste-file <file-path>" >&2
+  exit 1
+fi
+
+FILE="$1"
+
+if [ ! -f "$FILE" ]; then
+  echo "File not found: $FILE" >&2
+  exit 1
+fi
+
+# Convert to absolute path
+ABS_PATH="$(realpath "$FILE")"
+
+# Copy file URI to clipboard (backgrounded — xclip blocks until
+# the selection is consumed, so it must run in parallel with the paste)
+echo -n "file://$ABS_PATH" | xclip -selection clipboard -t text/uri-list >/dev/null 2>&1 &
+sleep 0.1
+
+# Paste using Ctrl+V (consumes the clipboard, letting xclip exit)
+xdotool key ctrl+v
+
+# Small delay after paste
+sleep 0.1
+
+echo "pasted file: $ABS_PATH"

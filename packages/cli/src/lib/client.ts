@@ -37,7 +37,7 @@ export interface Client {
   messages: {
     list: { query: (input: { chatId: string; limit?: number; offset?: number }) => Promise<Message[]> };
     media: { query: (input: { chatId: string; localId: number }) => Promise<MediaResult> };
-    send: { mutate: (input: { chatId: string; text?: string; files?: string[]; image?: { data: string; mimeType: string } }) => Promise<SendResult> };
+    send: { mutate: (input: { chatId: string; text?: string; image?: { data: string; mimeType: string }; file?: { data: string; filename: string } }) => Promise<SendResult> };
   };
   debug: {
     screenshot: { query: () => Promise<{ base64: string }> };

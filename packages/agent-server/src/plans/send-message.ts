@@ -10,6 +10,7 @@ export interface SendMessageParams extends ActionParams {
   message?: string;
   imagePath?: string;
   imageMime?: string;
+  filePath?: string;
 }
 
 const sendMessageParamsSchema = z.object({
@@ -17,6 +18,7 @@ const sendMessageParamsSchema = z.object({
   message: z.string().optional(),
   imagePath: z.string().optional(),
   imageMime: z.string().optional(),
+  filePath: z.string().optional(),
 });
 
 type SendMessagePhase =
@@ -173,7 +175,7 @@ export const sendMessagePlan: Plan<SendMessageParams, SendMessagePlanState> = {
           return { action: clickBounds(editNode.bounds), metadata: mainMeta };
         }
 
-        // ── inputting: Type message + Enter, or paste image + Enter ──
+        // ── inputting: Type message + Enter, paste image + Enter, or paste file + Enter ──
         case "inputting": {
           const found = findEditAndSendButton(a11y);
           if (!found) {
@@ -185,6 +187,12 @@ export const sendMessagePlan: Plan<SendMessageParams, SendMessagePlanState> = {
           }
 
           planState.phase = "confirming";
+
+          // File path: paste file URI via clipboard, then Enter to confirm
+          if (params.filePath) {
+            await execCommand("paste-file", [params.filePath]);
+            return { action: { type: "key", combo: "Return" }, metadata: mainMeta };
+          }
 
           // Image path: paste image via clipboard, then Enter to confirm
           if (params.imagePath) {

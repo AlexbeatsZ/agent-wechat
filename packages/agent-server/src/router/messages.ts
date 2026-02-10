@@ -48,13 +48,13 @@ export const messagesRouter = router({
     }),
 
   /**
-   * Send a text message or image via FSM plan
+   * Send a text message, image, or file via FSM plan
    */
   send: publicProcedure
     .input(sendParamsSchema)
     .mutation(async ({ input, ctx }): Promise<SendResult> => {
-      if (!input.text && !input.image) {
-        return { success: false, error: "No text or image provided" };
+      if (!input.text && !input.image && !input.file) {
+        return { success: false, error: "No text, image, or file provided" };
       }
 
       const session = ctx.session;
@@ -73,6 +73,13 @@ export const messagesRouter = router({
         imageMime = input.image.mimeType;
       }
 
+      // Decode base64 file to temp file (if provided)
+      let filePath: string | undefined;
+      if (input.file) {
+        filePath = `/tmp/send_file_${Date.now()}_${input.file.filename}`;
+        fs.writeFileSync(filePath, Buffer.from(input.file.data, "base64"));
+      }
+
       try {
         const db = getDb();
         const context = await createContext(session, db);
@@ -84,6 +91,7 @@ export const messagesRouter = router({
             message: input.text,
             imagePath,
             imageMime,
+            filePath,
           },
           context,
           {
@@ -95,9 +103,12 @@ export const messagesRouter = router({
         const result = await runExecution(execution);
         return { success: result.success, error: result.error };
       } finally {
-        // Clean up temp file
+        // Clean up temp files
         if (imagePath) {
           try { fs.unlinkSync(imagePath); } catch {}
+        }
+        if (filePath) {
+          try { fs.unlinkSync(filePath); } catch {}
         }
       }
     }),

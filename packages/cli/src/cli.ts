@@ -236,9 +236,10 @@ messagesCmd
   .description("Send a message to a chat")
   .option("--text <text>", "Text message to send")
   .option("--image <path>", "Image file to send")
-  .action(async (chatId: string, opts: { text?: string; image?: string }) => {
-    if (!opts.text && !opts.image) {
-      console.error("Must provide --text or --image");
+  .option("--file <path>", "File to send")
+  .action(async (chatId: string, opts: { text?: string; image?: string; file?: string }) => {
+    if (!opts.text && !opts.image && !opts.file) {
+      console.error("Must provide --text, --image, or --file");
       process.exit(1);
     }
 
@@ -255,7 +256,17 @@ messagesCmd
       image = { data: data.toString("base64"), mimeType };
     }
 
-    await cmdSend(getClient(), chatId, opts.text, image);
+    let file: { data: string; filename: string } | undefined;
+    if (opts.file) {
+      if (!fs.existsSync(opts.file)) {
+        console.error(`File not found: ${opts.file}`);
+        process.exit(1);
+      }
+      const data = fs.readFileSync(opts.file);
+      file = { data: data.toString("base64"), filename: path.basename(opts.file) };
+    }
+
+    await cmdSend(getClient(), chatId, opts.text, image, file);
   });
 
 // ============================================
@@ -555,12 +566,14 @@ async function cmdChatOpen(client: Client, chatId: string) {
   }
 }
 
-async function cmdSend(client: Client, chatId: string, text?: string, image?: { data: string; mimeType: string }) {
-  console.log(`Sending ${image ? "image" : "message"} to ${chatId}...`);
+async function cmdSend(client: Client, chatId: string, text?: string, image?: { data: string; mimeType: string }, file?: { data: string; filename: string }) {
+  const what = file ? `file "${file.filename}"` : image ? "image" : "message";
+  console.log(`Sending ${what} to ${chatId}...`);
   const result = await client.messages.send.mutate({
     chatId,
     ...(text ? { text } : {}),
     ...(image ? { image } : {}),
+    ...(file ? { file } : {}),
   });
 
   if (result.success) {

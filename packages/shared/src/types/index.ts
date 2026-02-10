@@ -142,10 +142,13 @@ export interface ListMessagesParams {
 export interface SendParams {
   chatId: string;
   text?: string;
-  files?: string[];
   image?: {
     data: string;       // base64-encoded
     mimeType: string;   // "image/png", "image/jpeg", "image/gif"
+  };
+  file?: {
+    data: string;       // base64-encoded
+    filename: string;   // original filename (e.g. "doc.pdf")
   };
 }
 
