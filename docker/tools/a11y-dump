@@ -64,6 +64,12 @@ def get_states(node):
             "FOCUSED", "SELECTED", "CHECKED", "PRESSED", "EXPANDED",
             "COLLAPSED", "ACTIVE", "ARMED", "BUSY", "EDITABLE"
         )]
+        # Detect disabled state for interactive elements (ENABLED absent)
+        role = node.get_role_name().replace(" ", "-")
+        interactive_roles = {"push-button", "toggle-button", "check-box", "radio-button",
+                             "text", "combo-box", "menu-item", "spin-button"}
+        if role in interactive_roles and "ENABLED" not in state_names:
+            useful_states.append("DISABLED")
         return useful_states if useful_states else None
     except Exception:
         return None

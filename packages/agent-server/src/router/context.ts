@@ -8,6 +8,8 @@ export interface Context {
   db: DatabaseInstance;
   sessionId?: string;
   session?: Session;
+  /** Fires when the HTTP request closes (client disconnect / Ctrl+C) */
+  abortSignal: AbortSignal;
 }
 
 export async function createContext(
@@ -37,9 +39,21 @@ export async function createContext(
     }
   }
 
+  // Abort when client disconnects before response is sent (Ctrl+C)
+  const abortController = new AbortController();
+  if ("res" in opts && opts.res && "writableFinished" in opts.res) {
+    const res = opts.res as import("http").ServerResponse;
+    res.on("close", () => {
+      if (!res.writableFinished) {
+        abortController.abort();
+      }
+    });
+  }
+
   return {
     db,
     sessionId,
     session,
+    abortSignal: abortController.signal,
   };
 }

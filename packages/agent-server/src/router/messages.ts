@@ -8,6 +8,10 @@ import type { SendResult, Message, MediaResult } from "@thisnick/agent-wechat-sh
 import { getStoredKeys, getImageKeys, storeSingleKey } from "../lib/wechat-keys.js";
 import { listMessagesFromWechatDb } from "../lib/wechat-messages.js";
 import { getMessageMedia } from "../lib/wechat-media.js";
+import { getDb } from "../db/index.js";
+import { createContext } from "../context/index.js";
+import { createExecution, runExecution } from "../execution/index.js";
+import { sendMessagePlan } from "../plans/index.js";
 
 export const messagesRouter = router({
   /**
@@ -43,12 +47,34 @@ export const messagesRouter = router({
     }),
 
   /**
-   * Send a message - TODO: implement via FSM plan
+   * Send a text message via FSM plan
    */
   send: publicProcedure
     .input(sendParamsSchema)
-    .mutation(async ({ input }): Promise<SendResult> => {
-      // TODO: Implement via sendMessagePlan
-      throw new Error("Not implemented - use FSM plan");
+    .mutation(async ({ input, ctx }): Promise<SendResult> => {
+      if (!input.text) {
+        return { success: false, error: "No text provided" };
+      }
+
+      const session = ctx.session;
+      if (!session) {
+        return { success: false, error: "No session available" };
+      }
+
+      const db = getDb();
+      const context = await createContext(session, db);
+
+      const execution = createExecution(
+        sendMessagePlan,
+        { chatId: input.chatId, message: input.text },
+        context,
+        {
+          emit: () => {},
+          abortSignal: ctx.abortSignal,
+        }
+      );
+
+      const result = await runExecution(execution);
+      return { success: result.success, error: result.error };
     }),
 });

@@ -230,7 +230,6 @@ def run_frida_script(pid, script_path, timeout=30, stop_on="SCRIPT_DONE"):
             proc.wait(timeout=3)
         except Exception:
             proc.kill()
-        time.sleep(1)  # ensure frida fully detaches
     return lines
 
 
@@ -435,9 +434,6 @@ if (sessionElements.length === 0) {{
             time.sleep(2)
         log(f"[chat-select] Running Frida enumerate script (attempt {attempt})...")
         lines = run_frida_script(pid, "/tmp/_cs_enum.js", timeout=45)
-        # Log all Frida output for debugging
-        for line in lines:
-            log(f"[frida-enum] {line}")
         # Parse raw sessions from Frida output (raw vector index -> username)
         raw_sessions = []  # [(raw_index, username), ...] in vector order
         vector_base = None
@@ -459,12 +455,8 @@ if (sessionElements.length === 0) {{
         if raw_sessions:
             raw_sessions.sort(key=lambda x: x[0])
 
-            # Log raw vector contents
             gh_count = sum(1 for _, u in raw_sessions if is_official_account(u))
             log(f"[chat-select] Raw vector: {len(raw_sessions)} sessions ({gh_count} official accounts), base={vector_base} count={vector_count}")
-            for raw_idx, uname in raw_sessions:
-                tag = " [official]" if is_official_account(uname) else ""
-                log(f"[chat-select]   raw[{raw_idx:3d}] {uname}{tag}")
 
             # Build filtered index: skip official accounts, re-number from 0
             # selectSession() uses indices that exclude official accounts
@@ -480,11 +472,6 @@ if (sessionElements.length === 0) {{
                 log(f"[chat-select] Current selection: {current_sel}")
 
             log(f"[chat-select] Filtered: {len(sessions)} sessions (excluded {gh_count} official accounts)")
-            for i, (uname, idx) in enumerate(sorted(sessions.items(), key=lambda x: x[1])):
-                if i < 15:
-                    log(f"[chat-select]   [{idx:3d}] {uname}")
-                elif i == 15:
-                    log(f"[chat-select]   ... and {len(sessions) - 15} more")
 
             return sessions, vector_base, vector_count, current_sel
     return {}, None, 0, None
@@ -496,8 +483,7 @@ def select_by_index(pid, profile, target_index, click_coords, vector_base, vecto
     username_off = profile["USERNAME_OFF"]
     elem_size = profile["ELEM_SIZE"]
 
-    log(f"[chat-select] Hooking selectSession at offset 0x{select_session:x}, target_index={target_index}")
-    log(f"[chat-select] Vector base={vector_base} count={vector_count}")
+    log(f"[chat-select] Hooking selectSession, target_index={target_index}")
 
     write_js("/tmp/_cs_select.js", f"""
 var w = Process.getModuleByName("wechat");
@@ -541,26 +527,14 @@ function readFilteredUsername(filteredIdx) {{
     return "<oob-filtered:" + filteredIdx + ">";
 }}
 
-console.log("HOOK at " + addr + " (base+0x{select_session:x})");
 console.log("READY target_filtered=" + TARGET + " -> " + readFilteredUsername(TARGET));
-
-// Also dump first few raw entries for cross-reference
-for (var di = 0; di < Math.min(5, VECTOR_COUNT); di++) {{
-    console.log("  raw[" + di + "] = " + readRawUsername(di));
-}}
 
 var count = 0;
 Interceptor.attach(addr, {{
     onEnter: function(args) {{
         var orig = args[1].toInt32();
-        var origFiltered = readFilteredUsername(orig);
-        var targetFiltered = readFilteredUsername(TARGET);
-        console.log("HOOK_CALL #" + count + " args[1]=" + orig + " (" + origFiltered + ")");
-        if (count >= 2) {{
-            console.log("SKIP (already redirected twice)");
-            return;
-        }}
-        console.log("REDIRECT " + orig + " (" + origFiltered + ") -> " + TARGET + " (" + targetFiltered + ")");
+        if (count >= 2) return;
+        console.log("REDIRECT " + orig + " -> " + TARGET + " (" + readFilteredUsername(TARGET) + ")");
         args[1] = ptr(TARGET);
         count++;
     }}
@@ -568,7 +542,6 @@ Interceptor.attach(addr, {{
 """)
 
     proc = run_frida_bg(pid, "/tmp/_cs_select.js")
-    time.sleep(0.5)
 
     # Click the chat item via the click tool
     cx, cy = click_coords
@@ -586,7 +559,6 @@ Interceptor.attach(addr, {{
             break
         line = line.rstrip()
         lines.append(line)
-        log(f"[frida-hook] {line}")
         if "REDIRECT" in line:
             break
 

@@ -76,7 +76,7 @@ export async function executeAction<TParams, TPlanState = unknown>(
         await sleep(100);
       }
       // Type text using clipboard (Unicode-safe)
-      await execCommand("type", [action.text], { session });
+      await execCommand("input", [action.text], { session });
       break;
     }
 
@@ -121,7 +121,12 @@ export async function executeAction<TParams, TPlanState = unknown>(
     }
 
     case "sequence": {
-      for (const subAction of action.actions) {
+      for (let i = 0; i < action.actions.length; i++) {
+        const subAction = action.actions[i];
+        const label = subAction.type === "key" ? `key ${subAction.combo}` :
+                      subAction.type === "type" ? `type (${subAction.text.length} chars)` :
+                      subAction.type;
+        console.log(`[FSM]   sequence step ${i + 1}/${action.actions.length}: ${label}`);
         await executeAction(subAction, ctx);
       }
       break;

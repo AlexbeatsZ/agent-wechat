@@ -232,10 +232,15 @@ messagesCmd
   });
 
 messagesCmd
-  .command("send <chatId> <message...>")
+  .command("send <chatId>")
   .description("Send a message to a chat")
-  .action(async (chatId: string, messageParts: string[]) => {
-    await cmdSend(getClient(), chatId, messageParts.join(" "));
+  .option("--text <text>", "Text message to send")
+  .action(async (chatId: string, opts: { text?: string }) => {
+    if (!opts.text) {
+      console.error("Must provide --text");
+      process.exit(1);
+    }
+    await cmdSend(getClient(), chatId, opts.text);
   });
 
 // ============================================

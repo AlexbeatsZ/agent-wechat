@@ -68,7 +68,6 @@ export const statusRouter = router({
 
     const db = getDb();
     const context = await createContext(session, db);
-    const abortController = new AbortController();
 
     const execution = createExecution(
       authStatusPlan,
@@ -76,7 +75,7 @@ export const statusRouter = router({
       context,
       {
         emit: () => {},
-        abortSignal: abortController.signal,
+        abortSignal: ctx.abortSignal,
       }
     );
 

@@ -72,7 +72,6 @@ export const chatsRouter = router({
 
       const db = getDb();
       const context = await createContext(session, db);
-      const abortController = new AbortController();
 
       const execution = createExecution(
         chatOpenPlan,
@@ -80,7 +79,7 @@ export const chatsRouter = router({
         context,
         {
           emit: () => {},
-          abortSignal: abortController.signal,
+          abortSignal: ctx.abortSignal,
         }
       );
 
