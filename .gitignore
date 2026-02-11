@@ -16,6 +16,7 @@ docker/shared/
 
 # Rust build artifacts
 packages/agent-server-rust/target/
+packages/agent-server-rust/bindings/
 
 # Build caches
 .turbo

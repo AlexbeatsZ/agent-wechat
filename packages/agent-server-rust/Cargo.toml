@@ -48,6 +48,9 @@ async-trait = "0.1"
 # Cancellation
 tokio-util = "0.7"
 
+# TypeScript type generation
+ts-rs = "10"
+
 [profile.release]
 opt-level = "z"     # Optimize for size
 lto = true          # Link-time optimization

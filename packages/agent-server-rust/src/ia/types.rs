@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use ts_rs::TS;
 
 // ============================================
-// A11y Tree Types (from a11y-dump)
+// A11y Tree Types (from a11y-dump) — internal only
 // ============================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +41,7 @@ pub struct A11yNode {
 }
 
 // ============================================
-// Actions
+// Actions — internal only
 // ============================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,7 +93,7 @@ pub struct SubscriptionEvent {
 }
 
 // ============================================
-// Multi-Window State Model
+// Multi-Window State Model — internal only
 // ============================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -200,7 +201,7 @@ impl Default for AppState {
 }
 
 // ============================================
-// State Definition
+// State Definition — internal only
 // ============================================
 
 pub struct IdentifyArgs<'a> {
@@ -229,7 +230,7 @@ pub trait IAState: Send + Sync {
 }
 
 // ============================================
-// Identified States
+// Identified States — internal only
 // ============================================
 
 #[derive(Debug, Clone)]
@@ -247,7 +248,7 @@ pub struct IdentifiedStates {
 }
 
 // ============================================
-// Effects
+// Effects — internal only
 // ============================================
 
 pub enum Effect {
@@ -255,7 +256,7 @@ pub enum Effect {
 }
 
 // ============================================
-// Plan
+// Plan — internal only
 // ============================================
 
 pub struct SelectedAction {
@@ -264,7 +265,7 @@ pub struct SelectedAction {
 }
 
 // ============================================
-// Execution status
+// Execution status — internal only
 // ============================================
 
 #[derive(Debug, Clone, PartialEq)]
@@ -276,78 +277,99 @@ pub enum ExecutionStatus {
 }
 
 // ============================================
-// Session types (shared)
+// Session types (shared — generates TypeScript)
 // ============================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Session {
     pub id: String,
     pub name: String,
     pub linux_user: String,
     pub display: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub dbus_address: Option<String>,
     pub vnc_port: i32,
     pub status: String,
     pub login_state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub logged_in_user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
     pub wechat_pid: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
     pub xvfb_pid: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
     pub dbus_pid: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error_message: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 // ============================================
-// Chat types (shared)
+// Chat types (shared — generates TypeScript)
 // ============================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Chat {
     pub id: String,
     pub username: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub remark: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub last_message_preview: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub last_message_sender: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub last_activity_at: Option<String>,
     pub unread_count: i32,
     pub is_group: bool,
 }
 
 // ============================================
-// Message types (shared)
+// Message types (shared — generates TypeScript)
 // ============================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Message {
+    #[ts(type = "number")]
     pub local_id: i64,
+    #[ts(type = "number")]
     pub server_id: i64,
     pub chat_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub sender: Option<String>,
     #[serde(rename = "type")]
+    #[ts(rename = "type")]
     pub msg_type: i32,
     pub content: String,
     pub timestamp: String,
 }
 
 // ============================================
-// Login subscription event types
+// Login subscription event types (shared — generates TypeScript)
 // ============================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type")]
+#[ts(export)]
 pub enum LoginSubscriptionEvent {
     #[serde(rename = "status")]
     Status { message: String },
@@ -355,19 +377,26 @@ pub enum LoginSubscriptionEvent {
     Qr {
         #[serde(rename = "qrData")]
         qr_data: String,
-        #[serde(rename = "qrBinaryData", skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "qrBinaryData")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional, type = "number[]")]
         qr_binary_data: Option<Vec<u8>>,
-        #[serde(rename = "qrDataUrl", skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "qrDataUrl")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
         qr_data_url: Option<String>,
     },
     #[serde(rename = "phone_confirm")]
     PhoneConfirm {
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
         message: Option<String>,
     },
     #[serde(rename = "login_success")]
     LoginSuccess {
-        #[serde(rename = "userId", skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "userId")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
         user_id: Option<String>,
     },
     #[serde(rename = "login_timeout")]
@@ -377,49 +406,81 @@ pub enum LoginSubscriptionEvent {
 }
 
 // ============================================
-// Send types
+// Send types (shared — generates TypeScript)
 // ============================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct SendParams {
-    #[serde(rename = "chatId")]
     pub chat_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub image: Option<ImageData>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub file: Option<FileData>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct ImageData {
     pub data: String,
-    #[serde(rename = "mimeType")]
     pub mime_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct FileData {
     pub data: String,
     pub filename: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct SendResult {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct MediaResult {
     #[serde(rename = "type")]
+    #[ts(rename = "type")]
     pub media_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub data: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub url: Option<String>,
     pub format: String,
     pub filename: String,
+}
+
+// ============================================
+// Open chat result (shared — generates TypeScript)
+// ============================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct OpenChatResult {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<String>,
 }
