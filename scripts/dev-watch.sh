@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Watch Rust source, cross-compile on change, and hot-swap the binary
-# in the running container (restarts only the server process).
+# Watch Rust source, compile inside Docker on change, and hot-swap the
+# binary in the running container (restarts only the server process).
 #
 # Usage:
 #   pnpm dev:watch                     # auto-detect everything
@@ -10,6 +10,8 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 RUST_DIR="$ROOT_DIR/packages/agent-server-rust"
+BUILDER_IMAGE="rust:1.93-bookworm"
+CACHE_VOLUME="agent-wechat-cargo-cache"
 
 CONTAINER=""
 
@@ -36,31 +38,53 @@ if [ -z "$CONTAINER" ]; then
   fi
 fi
 
-# Detect container architecture
+# Detect container platform for docker run --platform
 CONTAINER_ARCH=$(docker inspect --format '{{.Architecture}}' "$CONTAINER" 2>/dev/null || echo "")
 case "$CONTAINER_ARCH" in
-  amd64)  TARGET="x86_64-unknown-linux-gnu" ;;
-  arm64)  TARGET="aarch64-unknown-linux-gnu" ;;
+  amd64)  PLATFORM="linux/amd64" ;;
+  arm64)  PLATFORM="linux/arm64" ;;
   *)
-    # Fall back to host arch
     case "$(uname -m)" in
-      x86_64)        TARGET="x86_64-unknown-linux-gnu" ;;
-      aarch64|arm64) TARGET="aarch64-unknown-linux-gnu" ;;
+      x86_64)        PLATFORM="linux/amd64" ;;
+      aarch64|arm64) PLATFORM="linux/arm64" ;;
       *)
-        echo "Unknown architecture. Cannot determine cross-compile target." >&2
+        echo "Unknown architecture." >&2
         exit 1
         ;;
     esac
     ;;
 esac
 
-BINARY="$RUST_DIR/target/$TARGET/release/agent-server"
-
 echo "Watching $RUST_DIR"
-echo "  Target:    $TARGET"
+echo "  Builder:   $BUILDER_IMAGE ($PLATFORM)"
 echo "  Container: $CONTAINER"
-echo "  Binary:    $BINARY"
+echo "  Cache:     docker volume '$CACHE_VOLUME'"
 echo ""
+
+# Build inside a Docker container matching the target platform.
+# Cargo registry + target dir cached in a named volume for fast incremental builds.
+build_and_deploy() {
+  echo "==> Building (docker)..."
+  docker run --rm \
+    --platform "$PLATFORM" \
+    -v "$RUST_DIR:/build:ro" \
+    -v "$CACHE_VOLUME:/build/target" \
+    -v "${CACHE_VOLUME}-registry:/usr/local/cargo/registry" \
+    -w /build \
+    "$BUILDER_IMAGE" \
+    cargo build --release
+
+  echo "==> Deploying to $CONTAINER"
+  # Extract binary from cache volume via a temporary container
+  local tmp_ct
+  tmp_ct=$(docker create -v "$CACHE_VOLUME:/target:ro" "$BUILDER_IMAGE")
+  docker cp "$tmp_ct:/target/release/agent-server" - | docker cp - "$CONTAINER:/opt/agent-server/"
+  docker rm "$tmp_ct" > /dev/null
+
+  # Kill server process — entrypoint restart loop brings it back with new binary
+  docker exec "$CONTAINER" pkill -f '/opt/agent-server/agent-server' 2>/dev/null || true
+  echo "==> Server restarting with new binary"
+}
 
 # Write a temp deploy script that cargo watch will call
 DEPLOY_SCRIPT=$(mktemp)
@@ -69,12 +93,13 @@ trap "rm -f $DEPLOY_SCRIPT" EXIT
 cat > "$DEPLOY_SCRIPT" <<SCRIPT
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$RUST_DIR"
-cross build --release --target $TARGET
-echo "==> Deploying to $CONTAINER"
-docker cp "$BINARY" "$CONTAINER:/opt/agent-server/agent-server"
-docker exec "$CONTAINER" pkill -f '/opt/agent-server/agent-server' 2>/dev/null || true
-echo "==> Server restarting with new binary"
+$(declare -f build_and_deploy)
+RUST_DIR="$RUST_DIR"
+PLATFORM="$PLATFORM"
+BUILDER_IMAGE="$BUILDER_IMAGE"
+CACHE_VOLUME="$CACHE_VOLUME"
+CONTAINER="$CONTAINER"
+build_and_deploy
 SCRIPT
 chmod +x "$DEPLOY_SCRIPT"
 

@@ -11,6 +11,29 @@ use states::contact_card::CONTACT_CARD_STATE;
 use states::login::LOGIN_STATES;
 use states::popup::POPUP_STATES;
 
+/// Look up an IAState implementation by its id string.
+pub fn find_state_by_id(id: &str) -> Option<&'static dyn IAState> {
+    for s in CHAT_STATES.iter() {
+        if s.id() == id {
+            return Some(s.as_ref());
+        }
+    }
+    for s in LOGIN_STATES.iter() {
+        if s.id() == id {
+            return Some(s.as_ref());
+        }
+    }
+    for s in POPUP_STATES.iter() {
+        if s.id() == id {
+            return Some(s.as_ref());
+        }
+    }
+    if CONTACT_CARD_STATE.id() == id {
+        return Some(&**CONTACT_CARD_STATE);
+    }
+    None
+}
+
 /// Identify current states from a11y tree and screenshot.
 ///
 /// Returns the identified states for all FSMs (mainWindow, popup, contactCard),

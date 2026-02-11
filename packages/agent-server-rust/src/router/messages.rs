@@ -3,9 +3,13 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
+use crate::context::create_context;
 use crate::db::get_db;
-use crate::ia::types::{MediaResult, Message, SendResult};
+use crate::execution::run_execution_loop;
+use crate::ia::types::{MediaResult, Message, SendResult, SubscriptionEvent};
+use crate::plans::send_message::{SendMessageParams, SendMessagePlan};
 use crate::tools::wechat_keys::{get_stored_keys, get_image_keys};
 use crate::tools::wechat_media::get_message_media;
 use crate::tools::wechat_messages;
@@ -120,9 +124,83 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         });
     }
 
-    // TODO: Run send-message FSM plan
+    let session = match get_session("default") {
+        Some(s) => s,
+        None => {
+            return Json(SendResult {
+                success: false,
+                error: Some("No session available".to_string()),
+            })
+        }
+    };
+
+    if session.logged_in_user.is_none() {
+        return Json(SendResult {
+            success: false,
+            error: Some("NOT_LOGGED_IN".to_string()),
+        });
+    }
+
+    // Decode base64 image to temp file
+    let mut image_path: Option<String> = None;
+    let mut image_mime: Option<String> = None;
+    if let Some(ref img) = input.image {
+        let ext = match img.mime_type.as_str() {
+            "image/jpeg" => ".jpg",
+            "image/gif" => ".gif",
+            _ => ".png",
+        };
+        let path = format!("/tmp/send_image_{}{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), ext);
+        if let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data) {
+            if std::fs::write(&path, &bytes).is_ok() {
+                image_mime = Some(img.mime_type.clone());
+                image_path = Some(path);
+            }
+        }
+    }
+
+    // Decode base64 file to temp file
+    let mut file_path: Option<String> = None;
+    if let Some(ref f) = input.file {
+        let path = format!("/tmp/send_file_{}_{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), f.filename);
+        if let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &f.data) {
+            if std::fs::write(&path, &bytes).is_ok() {
+                file_path = Some(path);
+            }
+        }
+    }
+
+    let mut context = {
+        let db = get_db();
+        create_context(session, &db)
+    };
+
+    let plan = SendMessagePlan;
+    let params = SendMessageParams {
+        chat_id: input.chat_id,
+        message: input.text,
+        image_path: image_path.clone(),
+        image_mime,
+        file_path: file_path.clone(),
+    };
+    let cancel = CancellationToken::new();
+    let noop_emit = |_: SubscriptionEvent| {};
+
+    let (result, _plan_state) =
+        run_execution_loop(&plan, &params, &mut context, &noop_emit, cancel).await;
+
+    // Clean up temp files
+    if let Some(p) = &image_path {
+        let _ = std::fs::remove_file(p);
+    }
+    if let Some(p) = &file_path {
+        let _ = std::fs::remove_file(p);
+    }
+
     Json(SendResult {
-        success: false,
-        error: Some("Not yet implemented".to_string()),
+        success: result.success,
+        error: result.error,
     })
 }

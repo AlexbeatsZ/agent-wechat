@@ -375,6 +375,152 @@ Chat data is read directly from WeChat's local databases.
 - [x] Plan-local state for execution-scoped data
 - [x] Chat open via FSM plan (with current-selection detection)
 - [x] Async selectAction for non-blocking tool calls in plans
-- [x] Send message via FSM plan (text + image)
-- [ ] Message history from WeChat DBs (message_0.db)
-- [ ] File sending
+- [x] Send message via FSM plan (text + image + file)
+- [x] Message history from WeChat DBs (message_0.db)
+- [x] Rust agent-server (replaced Node.js)
+
+## HTTP API Protocol
+
+The agent-server (Rust, port 6174) exposes a REST + WebSocket API consumed by the CLI.
+
+### Status
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/status` | Container health check |
+| GET | `/api/status/auth` | Auth status via FSM observation (a11y → identify → reduce) |
+| POST | `/api/status/login` | One-shot login check (screenshot → QR decode) |
+
+**GET /api/status** → `{ container, loginState: { status }, version }`
+
+**GET /api/status/auth** → `{ isLoggedIn: bool, loggedInUser: string? }`
+
+**POST /api/status/login** → `{ success: bool, state: { status }, qrDataUrl? }`
+
+### Login WebSocket
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/ws/login?timeoutMs=300000&newAccount=false` | Login flow via WebSocket |
+
+Runs full FSM execution loop. Server sends `LoginSubscriptionEvent` JSON messages:
+
+```
+{ "status":        { message } }
+{ "qr":            { qrData, qrBinaryData?, qrDataUrl? } }
+{ "phone_confirm": { message? } }
+{ "login_success": { userId? } }
+{ "login_timeout": {} }
+{ "error":         { message } }
+```
+
+### Chats
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/chats?limit=50&offset=0` | List chats (from WeChat DB) |
+| GET | `/api/chats/{id}` | Get single chat by username |
+| GET | `/api/chats/find?name=...` | Search chats by display name |
+| POST | `/api/chats/{id}/open` | Open chat in UI via FSM plan |
+
+**GET /api/chats** → `Chat[]`
+
+```typescript
+interface Chat {
+  id: string;           // = username
+  username: string;
+  name: string;
+  remark?: string;
+  lastMessagePreview?: string;
+  lastMessageSender?: string;
+  lastActivityAt?: string;  // ISO-8601
+  unreadCount?: number;
+  sortKey?: number;
+}
+```
+
+**POST /api/chats/{id}/open** → `{ ok, username?, index?, skipped?, error? }`
+
+### Messages
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/messages/{chatId}?limit=50&offset=0` | List messages (from WeChat DB) |
+| GET | `/api/messages/{chatId}/media/{localId}` | Get media for a message |
+| POST | `/api/messages/send` | Send text, image, or file via FSM plan |
+
+**GET /api/messages/{chatId}** → `Message[]`
+
+```typescript
+interface Message {
+  localId: number;
+  serverId: number;
+  chatId: string;
+  sender?: string;
+  type: number;        // WeChat message type
+  content: string;     // XML or plain text
+  timestamp: string;   // ISO-8601
+}
+```
+
+**GET /api/messages/{chatId}/media/{localId}** → `MediaResult`
+
+```typescript
+interface MediaResult {
+  type: string;        // "image" | "voice" | "emoji" | "unsupported"
+  data?: string;       // base64
+  url?: string;
+  format: string;      // "jpeg", "png", "silk", etc.
+  filename: string;
+}
+```
+
+**POST /api/messages/send** (JSON body) → `SendResult`
+
+```typescript
+// Request
+{ chatId: string, text?: string, image?: { data: string, mimeType: string }, file?: { data: string, filename: string } }
+// data fields are base64-encoded
+
+// Response
+{ success: boolean, error?: string }
+```
+
+### Sessions
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/sessions` | List all sessions |
+| POST | `/api/sessions` | Create session `{ name }` |
+| GET | `/api/sessions/{id}` | Get session |
+| DELETE | `/api/sessions/{id}` | Delete session |
+| POST | `/api/sessions/{id}/start` | Start session |
+| POST | `/api/sessions/{id}/stop` | Stop session |
+
+```typescript
+interface Session {
+  id: string;
+  name: string;
+  linuxUser: string;
+  display: string;
+  dbusAddress?: string;
+  vncPort: number;
+  status: string;
+  loginState: string;
+  loggedInUser?: string;
+  wechatPid?: number;
+}
+```
+
+### Debug
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/debug/screenshot` | `{ base64: string }` (PNG) |
+| GET | `/api/debug/a11y?format=json\|aria` | `{ tree?, aria?, error? }` |
+
+### Events WebSocket
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/ws/events` | Real-time event stream (not yet wired up) |

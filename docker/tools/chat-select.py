@@ -398,9 +398,6 @@ if (!manager) {{
             time.sleep(2)
         log(f"[chat-select] Running Frida enumerate script (attempt {attempt})...")
         lines = run_frida_script(pid, "/tmp/_cs_enum.js", timeout=45)
-        # Log all Frida output for debugging
-        for line in lines:
-            log(f"[frida-enum] {line}")
         # Parse raw sessions from Frida output (raw vector index -> username)
         raw_sessions = []  # [(raw_index, username), ...] in vector order
         vector_base = None

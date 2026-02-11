@@ -1,7 +1,7 @@
 # ============================================
 # Stage 1: Build the Rust server binary
 # ============================================
-FROM rust:1.84-bookworm AS builder
+FROM rust:1.93-bookworm AS builder
 
 WORKDIR /build
 
@@ -79,10 +79,6 @@ RUN cd /tmp \
     && make -j$(nproc) \
     && cp sqlcipher /usr/local/bin/sqlcipher \
     && cd / && rm -rf /tmp/sqlcipher-4.6.1
-
-# Remove build dependencies to save space
-RUN apt-get purge -y build-essential tcl && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
 
 # ============================================
 # X11 socket directory

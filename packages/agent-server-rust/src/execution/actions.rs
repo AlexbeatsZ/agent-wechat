@@ -1,4 +1,5 @@
-use crate::ia::types::Action;
+use crate::ia::selectors::query_selector;
+use crate::ia::types::{A11yNode, Action, SubscriptionEvent};
 use crate::tools::exec::{exec_command, ExecOptions};
 use std::future::Future;
 use std::pin::Pin;
@@ -8,12 +9,26 @@ use std::pin::Pin;
 pub fn execute_action<'a>(
     action: &'a Action,
     options: &'a ExecOptions,
+    a11y: &'a A11yNode,
+    emit: &'a (dyn Fn(SubscriptionEvent) + Send + Sync),
 ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
     Box::pin(async move {
         match action {
             Action::ClickSelector { selector } => {
-                tracing::debug!("[action] click selector: {selector}");
-                // Would need a11y tree context to resolve selector to coordinates
+                if let Some(node) = query_selector(a11y, selector) {
+                    if let Some(bounds) = &node.bounds {
+                        let cx = (bounds.x + bounds.width / 2.0).round() as i32;
+                        let cy = (bounds.y + bounds.height / 2.0).round() as i32;
+                        tracing::info!("[action] click selector '{selector}' → ({cx}, {cy})");
+                        let cx_str = cx.to_string();
+                        let cy_str = cy.to_string();
+                        exec_command("click", &[&cx_str, &cy_str], options).await;
+                    } else {
+                        tracing::warn!("[action] click selector '{selector}' matched but no bounds");
+                    }
+                } else {
+                    tracing::warn!("[action] click selector '{selector}' — no match");
+                }
             }
 
             Action::ClickCoords { x, y } => {
@@ -52,13 +67,13 @@ pub fn execute_action<'a>(
                 tokio::time::sleep(std::time::Duration::from_millis(*ms)).await;
             }
 
-            Action::Emit { .. } => {
-                // Emit actions are handled by the execution loop, not here
+            Action::Emit { event } => {
+                emit(event.clone());
             }
 
             Action::Sequence { actions } => {
                 for a in actions {
-                    execute_action(a, options).await;
+                    execute_action(a, options, a11y, emit).await;
                 }
             }
         }
