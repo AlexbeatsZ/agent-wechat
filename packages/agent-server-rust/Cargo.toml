@@ -19,6 +19,9 @@ serde_json = "1.0"
 # Database (SQLite + SQLCipher bundled)
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
 
+# Database migrations
+refinery = { version = "0.8", features = ["rusqlite"] }
+
 # Image processing + QR
 image = { version = "0.25", default-features = false, features = ["png"] }
 rqrr = "0.8"
