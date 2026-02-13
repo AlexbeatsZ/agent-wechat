@@ -212,6 +212,24 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
     collectStatusIssues: collectWeChatStatusIssues,
   },
 
+  // ---- Setup adapter (channels add) ----
+  setup: {
+    applyAccountConfig: ({ cfg, input }: { cfg: any; accountId: string; input: any }) => {
+      const serverUrl = input.url || input.httpUrl || "http://localhost:6174";
+      return {
+        ...cfg,
+        channels: {
+          ...cfg.channels,
+          wechat: {
+            ...cfg.channels?.wechat,
+            enabled: true,
+            serverUrl,
+          },
+        },
+      };
+    },
+  },
+
   // ---- Onboarding adapter ----
   onboarding: wechatOnboardingAdapter,
 };
