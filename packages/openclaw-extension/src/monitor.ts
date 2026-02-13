@@ -239,14 +239,36 @@ async function processUnreadChat(
   await sleep(500);
 
   for (const msg of newMessages) {
+    log?.info?.(
+      `[wechat:${liveAccount.accountId}] Processing msg ${msg.localId}: type=${msg.type}, sender=${msg.sender}, isSelf=${msg.isSelf}, content=${(msg.content || "").slice(0, 50)}`,
+    );
+
+    // Skip self-sent messages
+    if (msg.isSelf) {
+      log?.info?.(`[wechat:${liveAccount.accountId}] Skipping self-sent msg ${msg.localId}`);
+      continue;
+    }
+
+    const isGroup = chatId.includes("@chatroom");
+    const senderId = msg.sender ?? chatId;
+    const senderName = msg.sender ?? chat.name;
+
+    // ---- Policy check ----
+    if (!isMessageAllowed(liveAccount, isGroup, senderId)) {
+      log?.info?.(`[wechat:${liveAccount.accountId}] Blocked by policy: ${isGroup ? "group" : "dm"} from ${senderId}`);
+      continue;
+    }
+
     // Attempt media download for supported types
     let mediaPath: string | undefined;
     let mediaMime: string | undefined;
 
     const baseType = msg.type & 0x7fffffff;
     if (MEDIA_TYPES.has(baseType)) {
+      log?.info?.(`[wechat:${liveAccount.accountId}] Downloading media for msg ${msg.localId} (type ${baseType})`);
       try {
         const result = await client.getMedia(chatId, msg.localId);
+        log?.info?.(`[wechat:${liveAccount.accountId}] Media result: type=${result.type}, format=${result.format}, hasData=${!!result.data}`);
         if (result.data && result.type !== "unsupported") {
           const mimeMap: Record<string, string> = {
             jpeg: "image/jpeg",
@@ -259,29 +281,25 @@ async function processUnreadChat(
           mediaMime = mimeMap[result.format] ?? `application/${result.format}`;
           // Save media to temp file via runtime
           const buf = Buffer.from(result.data, "base64");
-          const saved = await core.channel.media.saveMediaBuffer({
-            buffer: buf,
-            mimeType: mediaMime,
-            filename: result.filename,
-          });
+          const saved = await core.channel.media.saveMediaBuffer(
+            buf,
+            mediaMime,
+            "inbound",
+            undefined,
+            result.filename,
+          );
           mediaPath = saved?.path;
+          log?.info?.(`[wechat:${liveAccount.accountId}] Saved media to ${mediaPath}`);
         }
-      } catch {
-        // Media download failed — continue without attachment
+      } catch (err) {
+        log?.error?.(`[wechat:${liveAccount.accountId}] Media download failed: ${err}`);
       }
     }
 
-    const isGroup = chatId.includes("@chatroom");
-    const senderId = msg.sender ?? chatId;
-    const senderName = msg.sender ?? chat.name;
     const timestamp = new Date(msg.timestamp).getTime();
     const rawBody = msg.content || "";
 
-    // Skip self-sent messages
-    if (msg.isSelf) continue;
-
-    // ---- Policy check ----
-    if (!isMessageAllowed(liveAccount, isGroup, senderId)) continue;
+    log?.info?.(`[wechat:${liveAccount.accountId}] Dispatching msg ${msg.localId}: body="${rawBody.slice(0, 80)}"${mediaPath ? ` media=${mediaPath}` : ""}`);
 
     try {
       // Resolve routing
