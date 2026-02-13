@@ -1,12 +1,18 @@
 {
-  "name": "@agent-wechat/openclaw",
+  "name": "@agent-wechat/openclaw-wechat",
   "version": "0.1.0",
   "type": "module",
+  "scripts": {
+    "build": "esbuild index.ts --bundle --format=esm --platform=node --outfile=dist/index.js --external:openclaw"
+  },
   "dependencies": {
     "@thisnick/agent-wechat-shared": "file:../shared"
   },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
   "openclaw": {
-    "extensions": ["./index.ts"],
+    "extensions": ["./dist/index.js"],
     "channel": {
       "id": "wechat",
       "label": "WeChat",

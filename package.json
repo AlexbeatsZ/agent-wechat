@@ -18,6 +18,7 @@
     "dev:watch": "bash scripts/dev-watch.sh",
     "dev:deploy": "bash scripts/dev-deploy.sh",
     "dev:check": "cd packages/agent-server-rust && cargo watch -x check",
+    "deploy:openclaw": "bash scripts/deploy-openclaw.sh",
     "generate-types": "bash scripts/generate-types.sh"
   },
   "devDependencies": {
