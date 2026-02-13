@@ -52,7 +52,11 @@ pub fn execute_action<'a>(
                 let frame = find_frame_with_window(a11y);
                 let query_root = frame.unwrap_or(a11y);
 
-                if let Some(node) = query_selector(query_root, selector) {
+                // Search frame first, fall back to full tree (popups may render outside frame)
+                let node_match = query_selector(query_root, selector)
+                    .or_else(|| if frame.is_some() { query_selector(a11y, selector) } else { None });
+
+                if let Some(node) = node_match {
                     if let Some(bounds) = &node.bounds {
                         let cx = (bounds.x + bounds.width / 2.0).round() as i32;
                         let cy = (bounds.y + bounds.height / 2.0).round() as i32;
