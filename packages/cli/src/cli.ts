@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { Command, Option } from "commander";
-import { createClient, createSubscriptionClient, Client, ClientOptions } from "./lib/client.js";
+import { WeChatClient, type WeChatClientOptions } from "@thisnick/agent-wechat-shared";
+import { createSubscriptionClient, type SubscriptionClientOptions } from "./lib/client.js";
 import { spawn, execSync } from "child_process";
 import fs from "fs";
 import qrTerminal from "qrcode-terminal";
@@ -45,8 +46,19 @@ program
   .version(VERSION)
   .option("-s, --session <name>", "Use specified session", "default");
 
-// Helper to get client options from program
-function getClientOptions(): ClientOptions {
+// Helper to create REST client
+function getClient(): WeChatClient {
+  const config = getConfig();
+  const opts = program.opts();
+  return new WeChatClient({
+    baseUrl: config.serverUrl,
+    token: config.token,
+    sessionId: opts.session,
+  });
+}
+
+// Helper to get subscription client options (WebSocket login)
+function getSubscriptionOptions(): SubscriptionClientOptions {
   const config = getConfig();
   const opts = program.opts();
   return {
@@ -54,11 +66,6 @@ function getClientOptions(): ClientOptions {
     token: config.token,
     sessionId: opts.session,
   };
-}
-
-// Helper to create client
-function getClient(): Client {
-  return createClient(getClientOptions());
 }
 
 // ============================================
@@ -149,7 +156,7 @@ authCmd
   .option("-n, --new", "Switch to new account instead of existing")
   .action(async (opts) => {
     const timeoutMs = parseInt(opts.timeout, 10) * 1000;
-    await cmdLogin(getClientOptions(), timeoutMs, opts.new ?? false);
+    await cmdLogin(getSubscriptionOptions(), timeoutMs, opts.new ?? false);
   });
 
 authCmd
@@ -157,7 +164,7 @@ authCmd
   .description("Check login status")
   .action(async () => {
     const client = getClient();
-    const { isLoggedIn, loggedInUser } = await client.status.authStatus.query();
+    const { isLoggedIn, loggedInUser } = await client.authStatus();
     if (isLoggedIn) {
       console.log(`Logged in${loggedInUser ? ` as ${loggedInUser}` : ""}`);
     } else {
@@ -201,8 +208,9 @@ chatsCmd
 chatsCmd
   .command("open <chatId>")
   .description("Open a chat in WeChat UI (triggers media downloads + clears unread)")
-  .action(async (chatId: string) => {
-    await cmdChatOpen(getClient(), chatId);
+  .option("--clear-unreads", "Clear unread count after opening")
+  .action(async (chatId: string, opts: { clearUnreads?: boolean }) => {
+    await cmdChatOpen(getClient(), chatId, opts.clearUnreads);
   });
 
 // ============================================
@@ -297,14 +305,14 @@ program
 // Command Implementations
 // ============================================
 
-async function cmdStatus(client: Client) {
-  const status = await client.status.get.query();
+async function cmdStatus(client: WeChatClient) {
+  const status = await client.status();
   console.log("Container:", status.container);
   console.log("Version:", status.version);
   console.log("Login State:", JSON.stringify(status.loginState, null, 2));
 }
 
-async function cmdLogin(options: ClientOptions, timeoutMs: number = 300_000, newAccount: boolean = false) {
+async function cmdLogin(options: SubscriptionClientOptions, timeoutMs: number = 300_000, newAccount: boolean = false) {
   console.log(newAccount ? "Initiating login with new account...\n" : "Initiating login...\n");
 
   const { client, close } = createSubscriptionClient(options);
@@ -376,8 +384,8 @@ async function cmdLogin(options: ClientOptions, timeoutMs: number = 300_000, new
   }
 }
 
-async function cmdChats(client: Client, limit: number = 50, offset: number = 0, json: boolean = false) {
-  const chats = await client.chats.list.query({ limit, offset });
+async function cmdChats(client: WeChatClient, limit: number = 50, offset: number = 0, json: boolean = false) {
+  const chats = await client.listChats(limit, offset);
 
   if (json) {
     console.log(JSON.stringify(chats, null, 2));
@@ -404,8 +412,8 @@ async function cmdChats(client: Client, limit: number = 50, offset: number = 0, 
   }
 }
 
-async function cmdChatGet(client: Client, chatId: string, json: boolean = false) {
-  const chat = await client.chats.get.query({ id: chatId });
+async function cmdChatGet(client: WeChatClient, chatId: string, json: boolean = false) {
+  const chat = await client.getChat(chatId);
 
   if (!chat) {
     console.error(`Chat not found: ${chatId}`);
@@ -469,8 +477,8 @@ function getMsgTypeLabel(rawType: number): string {
   return baseLabel;
 }
 
-async function cmdMessages(client: Client, chatId: string, limit: number = 50, offset: number = 0, json: boolean = false) {
-  const messages = await client.messages.list.query({ chatId, limit, offset });
+async function cmdMessages(client: WeChatClient, chatId: string, limit: number = 50, offset: number = 0, json: boolean = false) {
+  const messages = await client.listMessages(chatId, limit, offset);
 
   if (json) {
     console.log(JSON.stringify(messages, null, 2));
@@ -516,8 +524,8 @@ async function cmdMessages(client: Client, chatId: string, limit: number = 50, o
   console.log(`\n${messages.length} message(s) shown.`);
 }
 
-async function cmdMedia(client: Client, chatId: string, localId: number, outputPath?: string) {
-  const result = await client.messages.media.query({ chatId, localId });
+async function cmdMedia(client: WeChatClient, chatId: string, localId: number, outputPath?: string) {
+  const result = await client.getMedia(chatId, localId);
 
   if (result.type === "unsupported") {
     console.error("No media found for this message (unsupported type or not found).");
@@ -540,8 +548,8 @@ async function cmdMedia(client: Client, chatId: string, localId: number, outputP
   }
 }
 
-async function cmdFind(client: Client, name: string) {
-  const chats = await client.chats.find.query({ name });
+async function cmdFind(client: WeChatClient, name: string) {
+  const chats = await client.findChats(name);
   if (chats.length === 0) {
     console.log(`No chats found matching "${name}"`);
     return;
@@ -553,9 +561,9 @@ async function cmdFind(client: Client, name: string) {
   }
 }
 
-async function cmdChatOpen(client: Client, chatId: string) {
+async function cmdChatOpen(client: WeChatClient, chatId: string, clearUnreads?: boolean) {
   console.log(`Opening chat ${chatId}...`);
-  const result = await client.chats.open.mutate({ chatId });
+  const result = await client.openChat(chatId, clearUnreads);
 
   if (result.ok) {
     console.log(`Chat opened: ${result.username} (index ${result.index})`);
@@ -568,10 +576,10 @@ async function cmdChatOpen(client: Client, chatId: string) {
   }
 }
 
-async function cmdSend(client: Client, chatId: string, text?: string, image?: { data: string; mimeType: string }, file?: { data: string; filename: string }) {
+async function cmdSend(client: WeChatClient, chatId: string, text?: string, image?: { data: string; mimeType: string }, file?: { data: string; filename: string }) {
   const what = file ? `file "${file.filename}"` : image ? "image" : "message";
   console.log(`Sending ${what} to ${chatId}...`);
-  const result = await client.messages.send.mutate({
+  const result = await client.sendMessage({
     chatId,
     ...(text ? { text } : {}),
     ...(image ? { image } : {}),
@@ -592,16 +600,16 @@ async function cmdSend(client: Client, chatId: string, text?: string, image?: { 
   }
 }
 
-async function cmdScreenshot(client: Client, outputPath: string) {
+async function cmdScreenshot(client: WeChatClient, outputPath: string) {
   console.log(`Capturing screenshot...`);
-  const result = await client.debug.screenshot.query();
+  const result = await client.screenshot();
   const buffer = Buffer.from(result.base64, "base64");
   fs.writeFileSync(outputPath, buffer);
   console.log(`Screenshot saved to ${outputPath}`);
 }
 
-async function cmdA11y(client: Client, format: "json" | "aria") {
-  const result = await client.debug.a11y.query({ format });
+async function cmdA11y(client: WeChatClient, format: "json" | "aria") {
+  const result = await client.a11y(format);
   if (result.error) {
     console.error(`Error: ${result.error}`);
     return;
@@ -617,8 +625,8 @@ async function cmdA11y(client: Client, format: "json" | "aria") {
 // Session Commands Implementation
 // ============================================
 
-async function cmdSessionList(client: Client) {
-  const sessions = await client.sessions.list.query();
+async function cmdSessionList(client: WeChatClient) {
+  const sessions = await client.listSessions();
   if (sessions.length === 0) {
     console.log("No sessions found.");
     return;
@@ -639,9 +647,9 @@ async function cmdSessionList(client: Client) {
   }
 }
 
-async function cmdSessionCreate(client: Client, name: string) {
+async function cmdSessionCreate(client: WeChatClient, name: string) {
   console.log(`Creating session "${name}"...`);
-  const session = await client.sessions.create.mutate({ name });
+  const session = await client.createSession(name);
   console.log(`Session created!`);
   console.log(`  ID: ${session.id}`);
   console.log(`  Name: ${session.name}`);
@@ -651,9 +659,9 @@ async function cmdSessionCreate(client: Client, name: string) {
   console.log(`\nStart the session with: pnpm cli session start ${session.name}`);
 }
 
-async function cmdSessionStart(client: Client, idOrName: string) {
+async function cmdSessionStart(client: WeChatClient, idOrName: string) {
   console.log(`Starting session "${idOrName}"...`);
-  const session = await client.sessions.start.mutate({ id: idOrName });
+  const session = await client.startSession(idOrName);
   console.log(`Session started!`);
   console.log(`  Status: ${session.status}`);
   console.log(`  Display: ${session.display}`);
@@ -664,16 +672,16 @@ async function cmdSessionStart(client: Client, idOrName: string) {
   console.log(`\nLogin with: pnpm cli --session ${session.name} login`);
 }
 
-async function cmdSessionStop(client: Client, idOrName: string) {
+async function cmdSessionStop(client: WeChatClient, idOrName: string) {
   console.log(`Stopping session "${idOrName}"...`);
-  const session = await client.sessions.stop.mutate({ id: idOrName });
+  const session = await client.stopSession(idOrName);
   console.log(`Session stopped.`);
   console.log(`  Status: ${session.status}`);
 }
 
-async function cmdSessionDelete(client: Client, idOrName: string) {
+async function cmdSessionDelete(client: WeChatClient, idOrName: string) {
   console.log(`Deleting session "${idOrName}"...`);
-  const result = await client.sessions.delete.mutate({ id: idOrName });
+  const result = await client.deleteSession(idOrName);
   if (result.success) {
     console.log(`Session deleted.`);
   } else {

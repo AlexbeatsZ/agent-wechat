@@ -86,7 +86,17 @@ pub async fn find_chats(Query(params): Query<FindParams>) -> Json<Vec<Chat>> {
     ))
 }
 
-pub async fn open_chat(Path(chat_id): Path<String>) -> Json<serde_json::Value> {
+#[derive(Deserialize)]
+pub struct OpenChatParams {
+    #[serde(default, rename = "clearUnreads")]
+    clear_unreads: bool,
+}
+
+pub async fn open_chat(
+    Path(chat_id): Path<String>,
+    Query(params): Query<OpenChatParams>,
+) -> Json<serde_json::Value> {
+    let clear_unreads = params.clear_unreads;
     let session = match get_session("default") {
         Some(s) => s,
         None => {
@@ -110,7 +120,7 @@ pub async fn open_chat(Path(chat_id): Path<String>) -> Json<serde_json::Value> {
     };
 
     let plan = ChatOpenPlan;
-    let params = ChatOpenParams { chat_id };
+    let params = ChatOpenParams { chat_id, clear_unreads };
     let cancel = CancellationToken::new();
     let noop_emit = |_: SubscriptionEvent| {};
 

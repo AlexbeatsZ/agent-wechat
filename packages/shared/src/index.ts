@@ -1,6 +1,14 @@
 // Export types from types module
 export * from "./types/index.js";
 
+// Export HTTP client
+export {
+  WeChatClient,
+  type WeChatClientOptions,
+  type StatusResponse,
+  type AuthStatus,
+} from "./client.js";
+
 // Export schemas (but not the inferred types which duplicate types/)
 export {
   // Session schemas

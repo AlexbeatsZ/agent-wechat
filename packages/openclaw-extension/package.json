@@ -1,0 +1,22 @@
+{
+  "name": "@agent-wechat/openclaw",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@thisnick/agent-wechat-shared": "file:../shared"
+  },
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "channel": {
+      "id": "wechat",
+      "label": "WeChat",
+      "selectionLabel": "WeChat (微信)",
+      "aliases": ["weixin"],
+      "order": 80
+    },
+    "install": {
+      "npmSpec": "@agent-wechat/openclaw",
+      "localPath": "packages/openclaw-extension"
+    }
+  }
+}
