@@ -347,6 +347,16 @@ pub struct Chat {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+pub struct ReplyInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sender: Option<String>,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Message {
     #[ts(type = "number")]
     pub local_id: i64,
@@ -361,6 +371,12 @@ pub struct Message {
     pub msg_type: i32,
     pub content: String,
     pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub is_mentioned: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reply: Option<ReplyInfo>,
 }
 
 // ============================================

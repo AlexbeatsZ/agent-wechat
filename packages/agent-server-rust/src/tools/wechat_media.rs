@@ -709,8 +709,8 @@ pub fn get_message_media(
             get_voice_data(account_dir, keys, chat_id, local_id)
         }
         47 => {
-            // Emoji
-            get_emoji_media(account_dir, keys, &content, local_id)
+            // Emoji — CDN URL is included in message content, not a downloadable media
+            unsupported()
         }
         _ => {
             // Other types: check for cached thumbnail

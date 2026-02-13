@@ -1,5 +1,5 @@
 use super::wechat_db::{get_db_path, query_wechat_db};
-use crate::ia::types::Message;
+use crate::ia::types::{Message, ReplyInfo};
 use md5::{Digest, Md5};
 use std::collections::HashMap;
 
@@ -67,9 +67,11 @@ fn clean_content(content: &str, msg_type: i32) -> String {
     match base {
         // Image (type 3): replace XML with empty string
         3 if content.contains("<img") => String::new(),
-        // Emoji (type 47): extract description or clear
+        // Emoji (type 47): show cdnurl or [emoji]
         47 if content.contains("<emoji") => {
-            extract_xml_attr(content, "desc").unwrap_or_default()
+            extract_xml_attr(content, "cdnurl")
+                .filter(|u| u.starts_with("http"))
+                .unwrap_or_else(|| "[emoji]".to_string())
         }
         // Appmsg (type 49): extract title
         49 if content.contains("<msg>") => {
@@ -77,6 +79,39 @@ fn clean_content(content: &str, msg_type: i32) -> String {
         }
         _ => content.to_string(),
     }
+}
+
+/// Extract reply info from type 49 (appmsg) messages with <refermsg>.
+fn extract_reply_info(content: &str, msg_type: i32) -> Option<ReplyInfo> {
+    let base = msg_type & 0x7FFFFFFF;
+    if base != 49 || !content.contains("<refermsg>") {
+        return None;
+    }
+    // Extract the refermsg block
+    let rm_start = content.find("<refermsg>")?;
+    let rm_end = content.find("</refermsg>")? + "</refermsg>".len();
+    let refermsg = &content[rm_start..rm_end];
+
+    let sender = extract_xml_tag(refermsg, "displayname");
+    let ref_content = extract_xml_tag(refermsg, "content").unwrap_or_default();
+
+    // The referred content may be XML-escaped — unescape first
+    let unescaped = ref_content
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"");
+
+    // The referred content may itself be XML — clean it to a short text
+    let clean = if unescaped.contains("<msg>") {
+        extract_xml_tag(&unescaped, "title").unwrap_or(unescaped)
+    } else {
+        unescaped
+    };
+    Some(ReplyInfo {
+        sender,
+        content: clean,
+    })
 }
 
 /// Extract an XML attribute value: attr="value"
@@ -89,13 +124,32 @@ fn extract_xml_attr(xml: &str, attr: &str) -> Option<String> {
 }
 
 /// Extract text between XML tags: <tag>text</tag>
+/// Also handles CDATA: <tag><![CDATA[text]]></tag>
 fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let start = xml.find(&open)? + open.len();
     let end = xml[start..].find(&close)? + start;
-    let val = xml[start..end].trim().to_string();
+    let mut val = xml[start..end].trim().to_string();
+    // Strip CDATA wrapper if present
+    if val.starts_with("<![CDATA[") && val.ends_with("]]>") {
+        val = val[9..val.len() - 3].to_string();
+    }
     if val.is_empty() { None } else { Some(val) }
+}
+
+/// Check if the source XML indicates the current user is @-mentioned.
+fn check_is_mentioned(source: &str, account_dir: &str) -> bool {
+    if let Some(at_list) = extract_xml_tag(source, "atuserlist") {
+        // atuserlist may contain comma-separated wxids
+        for wxid in at_list.split(',') {
+            let wxid = wxid.trim();
+            if !wxid.is_empty() && account_dir.starts_with(wxid) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Find which message DB contains a chat and return (db_name, key).
@@ -158,11 +212,15 @@ pub fn list_messages(
         &db_path,
         key,
         &format!(
-            "SELECT local_id, server_id, local_type, create_time,
-                    hex(message_content) as hex_content,
-                    WCDB_CT_message_content as is_compressed
-             FROM \"{table_name}\"
-             ORDER BY create_time DESC
+            "SELECT m.local_id, m.server_id, m.local_type, m.create_time,
+                    hex(m.message_content) as hex_content,
+                    m.WCDB_CT_message_content as is_compressed,
+                    hex(m.source) as hex_source,
+                    m.WCDB_CT_source as source_compressed,
+                    n.user_name as sender_name
+             FROM \"{table_name}\" m
+             LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+             ORDER BY m.create_time DESC
              LIMIT {limit} OFFSET {offset};"
         ),
     );
@@ -191,12 +249,22 @@ pub fn list_messages(
 
             let raw_content = decode_message_content(hex_content, is_compressed);
 
-            // Extract sender for group messages ("wxid:\ncontent" format)
-            let (sender, body) = if is_group {
-                extract_group_sender(&raw_content)
+            // Get sender from Name2Id join (works for both group and 1:1 chats)
+            let sender = row
+                .get("sender_name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            // Strip group sender prefix from content ("wxid:\ncontent" format)
+            let body = if is_group {
+                extract_group_sender(&raw_content).1
             } else {
-                (None, raw_content)
+                raw_content
             };
+
+            // Extract reply info before cleaning (needs raw XML)
+            let reply = extract_reply_info(&body, msg_type);
 
             // Clean content for display (replace XML with summaries)
             let content = clean_content(&body, msg_type);
@@ -211,6 +279,31 @@ pub fn list_messages(
                 })
                 .unwrap_or_default();
 
+            // Check @-mention from source XML (only for group chats)
+            let is_mentioned = if is_group {
+                let hex_source = row
+                    .get("hex_source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let source_compressed = row
+                    .get("source_compressed")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+                    != 0;
+                if !hex_source.is_empty() {
+                    let source_xml = decode_message_content(hex_source, source_compressed);
+                    if check_is_mentioned(&source_xml, account_dir) {
+                        Some(true)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             Some(Message {
                 local_id,
                 server_id,
@@ -219,6 +312,8 @@ pub fn list_messages(
                 msg_type,
                 content,
                 timestamp,
+                is_mentioned,
+                reply,
             })
         })
         .collect()

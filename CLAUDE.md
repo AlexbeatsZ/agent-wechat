@@ -448,10 +448,15 @@ interface Message {
   localId: number;
   serverId: number;
   chatId: string;
-  sender?: string;
-  type: number;        // WeChat message type
-  content: string;     // cleaned text (XML stripped for images/emoji/appmsg)
-  timestamp: string;   // ISO-8601
+  sender?: string;        // wxid from Name2Id join
+  type: number;           // WeChat message type
+  content: string;        // cleaned: text as-is, emoji→cdnurl/[emoji], appmsg→title, image→empty
+  timestamp: string;      // ISO-8601
+  isMentioned?: boolean;  // true if current user is @-mentioned (group chats only)
+  reply?: {               // present for quote/reply messages (type 49, subtype 57)
+    sender?: string;      // display name of quoted sender
+    content: string;      // quoted message text
+  };
 }
 ```
 
@@ -459,10 +464,10 @@ interface Message {
 
 ```typescript
 interface MediaResult {
-  type: string;        // "image" | "voice" | "emoji" | "unsupported"
+  type: string;        // "image" | "voice" | "unsupported"
   data?: string;       // base64
-  url?: string;        // CDN URL (for emoji)
-  format: string;      // "jpeg", "png", "mp3", "gif", etc.
+  url?: string;        // CDN URL
+  format: string;      // "jpeg", "png", "mp3", etc.
   filename: string;
 }
 ```

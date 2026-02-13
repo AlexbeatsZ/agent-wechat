@@ -8,6 +8,7 @@ export type { LoginSubscriptionEvent } from "./LoginSubscriptionEvent.js";
 export type { MediaResult } from "./MediaResult.js";
 export type { Message } from "./Message.js";
 export type { OpenChatResult } from "./OpenChatResult.js";
+export type { ReplyInfo } from "./ReplyInfo.js";
 export type { SendParams } from "./SendParams.js";
 export type { SendResult } from "./SendResult.js";
 export type { Session } from "./Session.js";

@@ -488,19 +488,29 @@ async function cmdMessages(client: Client, chatId: string, limit: number = 50, o
   // Compute column widths
   const maxIdLen = Math.max(2, ...sorted.map(m => String(m.localId).length));
   const maxTypeLen = Math.max(4, ...sorted.map(m => getMsgTypeLabel(m.type).length));
+  const maxSenderLen = Math.max(6, ...sorted.map(m => (m.sender ?? "").length));
+  const hasAnyMention = sorted.some(m => m.isMentioned);
+  const atCol = hasAnyMention ? "@me  " : "";
+  const atHeader = hasAnyMention ? "@me".padEnd(5) : "";
 
   // Header
-  console.log(`${"ID".padEnd(maxIdLen)}  ${"Time".padEnd(22)}  ${"Type".padEnd(maxTypeLen)}  Message`);
-  console.log("-".repeat(maxIdLen + maxTypeLen + 32));
+  console.log(`${"ID".padEnd(maxIdLen)}  ${"Time".padEnd(22)}  ${atHeader}${"Type".padEnd(maxTypeLen)}  ${"Sender".padEnd(maxSenderLen)}  Message`);
+  console.log("-".repeat(maxIdLen + 22 + maxTypeLen + maxSenderLen + (hasAnyMention ? 5 : 0) + 10));
 
   for (const msg of sorted) {
     const time = new Date(msg.timestamp).toLocaleString();
     const typeLabel = getMsgTypeLabel(msg.type);
     const id = String(msg.localId).padEnd(maxIdLen);
-    const sender = msg.sender ? `${msg.sender}: ` : "";
-    const preview = msg.content.length > 120 ? msg.content.slice(0, 120) + "..." : msg.content;
+    const mention = hasAnyMention ? (msg.isMentioned ? "Y" : "").padEnd(5) : "";
+    const sender = (msg.sender ?? "").padEnd(maxSenderLen);
+    let preview = msg.content.length > 120 ? msg.content.slice(0, 120) + "..." : msg.content;
+    if (msg.reply) {
+      const rSender = msg.reply.sender ? `${msg.reply.sender}: ` : "";
+      const rSnippet = msg.reply.content.length > 40 ? msg.reply.content.slice(0, 40) + "..." : msg.reply.content;
+      preview = `[Re: ${rSender}${rSnippet}] ${preview}`;
+    }
 
-    console.log(`${id}  ${time.padEnd(22)}  ${typeLabel.padEnd(maxTypeLen)}  ${sender}${preview}`);
+    console.log(`${id}  ${time.padEnd(22)}  ${mention}${typeLabel.padEnd(maxTypeLen)}  ${sender}  ${preview}`);
   }
 
   console.log(`\n${messages.length} message(s) shown.`);
@@ -516,18 +526,7 @@ async function cmdMedia(client: Client, chatId: string, localId: number, outputP
 
   const outFile = outputPath ?? result.filename;
 
-  if (result.type === "emoji" && result.url) {
-    // Download from CDN URL
-    console.log(`Downloading emoji from CDN...`);
-    const response = await fetch(result.url);
-    if (!response.ok) {
-      console.error(`Failed to download emoji: HTTP ${response.status}`);
-      process.exit(1);
-    }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    fs.writeFileSync(outFile, buffer);
-    console.log(`Saved ${result.type} to ${outFile} (${buffer.length} bytes)`);
-  } else if (result.data) {
+  if (result.data) {
     // Decode base64
     const buffer = Buffer.from(result.data, "base64");
     fs.writeFileSync(outFile, buffer);
@@ -535,8 +534,8 @@ async function cmdMedia(client: Client, chatId: string, localId: number, outputP
   } else if (result.type === "image") {
     console.error("Image thumbnail not yet cached by WeChat. Try opening the chat in the app first.");
     process.exit(1);
-  } else if (result.type === "emoji") {
-    console.log(`Emoji found (md5 in filename: ${result.filename}) but no CDN URL available.`);
+  } else {
+    console.error(`Media type "${result.type}" has no downloadable data.`);
     process.exit(1);
   }
 }
