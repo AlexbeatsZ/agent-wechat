@@ -1,6 +1,6 @@
 use super::exec::{exec_command, ExecOptions};
 use super::wechat_db::{get_db_path, list_account_dbs};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OpenFlags};
 use std::collections::HashMap;
 
 /// Extract all WeChat DB credentials (async, non-blocking).
@@ -116,26 +116,29 @@ pub fn store_single_key(
 }
 
 /// Verify a single key against a database file.
+/// Opens read-only to avoid journal/WAL contention with WeChat.
 pub fn verify_key(db_path: &str, hex_key: &str) -> bool {
-    let input = format!(
-        "PRAGMA key = \"x'{hex_key}'\";\nPRAGMA cipher_compatibility = 4;\nSELECT count(*) FROM sqlite_master;\n"
-    );
+    let conn = match Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
 
-    std::process::Command::new("sqlcipher")
-        .arg(db_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            if let Some(stdin) = child.stdin.as_mut() {
-                let _ = stdin.write_all(input.as_bytes());
-            }
-            child.wait_with_output()
-        })
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    if conn
+        .execute_batch(&format!(
+            "PRAGMA key = \"x'{hex_key}'\"; PRAGMA cipher_compatibility = 4;"
+        ))
+        .is_err()
+    {
+        return false;
+    }
+
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    })
+    .is_ok()
 }
 
 /// Check if credential setup is needed.

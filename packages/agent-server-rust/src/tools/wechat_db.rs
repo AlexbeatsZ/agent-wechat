@@ -1,50 +1,83 @@
+use rusqlite::{Connection, OpenFlags};
+use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Query a WeChat database and return parsed rows.
-/// Uses sqlcipher CLI with `-json` output mode.
+/// Opens the database **read-only** via rusqlite to avoid journal/WAL
+/// contention with WeChat's own writes.
 pub fn query_wechat_db(
     db_path: &str,
     hex_key: &str,
     sql: &str,
-) -> Vec<serde_json::Value> {
-    let input = format!(
-        "PRAGMA key = \"x'{hex_key}'\";\nPRAGMA cipher_compatibility = 4;\n.mode json\n{sql}"
-    );
-
-    let output = Command::new("sqlcipher")
-        .arg(db_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            if let Some(stdin) = child.stdin.as_mut() {
-                let _ = stdin.write_all(input.as_bytes());
-            }
-            child.wait_with_output()
-        });
-
-    let output = match output {
-        Ok(o) => o,
-        Err(_) => return Vec::new(),
+) -> Vec<Value> {
+    let conn = match Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("[wechat-db] Failed to open {db_path}: {e}");
+            return Vec::new();
+        }
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let trimmed = stdout.trim();
-    if trimmed.is_empty() {
+    if let Err(e) = conn.execute_batch(&format!(
+        "PRAGMA key = \"x'{hex_key}'\"; PRAGMA cipher_compatibility = 4;"
+    )) {
+        tracing::warn!("[wechat-db] PRAGMA failed for {db_path}: {e}");
         return Vec::new();
     }
 
-    // Find the JSON array in the output (PRAGMAs output "ok" first)
-    let json_start = match trimmed.find('[') {
-        Some(i) => i,
-        None => return Vec::new(),
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("[wechat-db] Prepare failed for {db_path}: {e}");
+            return Vec::new();
+        }
     };
 
-    let json_str = &trimmed[json_start..];
-    serde_json::from_str(json_str).unwrap_or_default()
+    let col_names: Vec<String> = stmt
+        .column_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let rows = stmt.query_map([], |row| {
+        let mut map = Map::new();
+        for (i, name) in col_names.iter().enumerate() {
+            let val: Value = match row.get_ref(i) {
+                Ok(rusqlite::types::ValueRef::Null) => Value::Null,
+                Ok(rusqlite::types::ValueRef::Integer(n)) => Value::Number(n.into()),
+                Ok(rusqlite::types::ValueRef::Real(f)) => serde_json::Number::from_f64(f)
+                    .map(Value::Number)
+                    .unwrap_or(Value::Null),
+                Ok(rusqlite::types::ValueRef::Text(s)) => {
+                    Value::String(String::from_utf8_lossy(s).into_owned())
+                }
+                Ok(rusqlite::types::ValueRef::Blob(b)) => {
+                    // Hex-encode blobs (safety net — callers typically use hex() in SQL)
+                    let mut hex = String::with_capacity(b.len() * 2);
+                    for byte in b {
+                        use std::fmt::Write;
+                        let _ = write!(hex, "{byte:02X}");
+                    }
+                    Value::String(hex)
+                }
+                Err(_) => Value::Null,
+            };
+            map.insert(name.clone(), val);
+        }
+        Ok(Value::Object(map))
+    });
+
+    match rows {
+        Ok(mapped) => mapped.filter_map(|r| r.ok()).collect(),
+        Err(e) => {
+            tracing::warn!("[wechat-db] Query failed for {db_path}: {e}");
+            Vec::new()
+        }
+    }
 }
 
 /// Find the WeChat process PID.
