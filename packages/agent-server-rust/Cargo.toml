@@ -55,6 +55,9 @@ tokio-util = "0.7"
 # TypeScript type generation
 ts-rs = "10"
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 opt-level = "z"     # Optimize for size
 lto = "thin"        # Thin LTO (much less RAM than fat LTO)
