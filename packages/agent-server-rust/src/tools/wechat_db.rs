@@ -230,7 +230,6 @@ pub fn get_db_path(account_dir: &str, db_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rusqlite::{Connection, OpenFlags};
     use std::sync::{Arc, Barrier};
     use std::time::{Duration, Instant};
