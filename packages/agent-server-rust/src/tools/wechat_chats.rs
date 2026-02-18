@@ -26,7 +26,8 @@ pub fn list_chats(
         session_key,
         &format!(
             "SELECT username, type, unread_count, summary, draft, last_timestamp,
-                    sort_timestamp, last_msg_sender, last_sender_display_name, is_hidden
+                    sort_timestamp, last_msg_sender, last_sender_display_name, is_hidden,
+                    last_msg_locald_id
              FROM SessionTable
              WHERE is_hidden = 0
              ORDER BY sort_timestamp DESC
@@ -125,6 +126,10 @@ pub fn list_chats(
                         .unwrap_or_default()
                 });
 
+            let last_msg_local_id = session
+                .get("last_msg_locald_id")
+                .and_then(|v| v.as_i64());
+
             Some(Chat {
                 id: username.clone(),
                 username,
@@ -135,6 +140,7 @@ pub fn list_chats(
                 last_message_preview,
                 last_message_sender,
                 last_activity_at,
+                last_msg_local_id,
             })
         })
         .collect()
@@ -159,7 +165,8 @@ pub fn get_chat_by_username(
         session_key,
         &format!(
             "SELECT username, type, unread_count, summary, draft, last_timestamp,
-                    sort_timestamp, last_msg_sender, last_sender_display_name, is_hidden
+                    sort_timestamp, last_msg_sender, last_sender_display_name, is_hidden,
+                    last_msg_locald_id
              FROM SessionTable
              WHERE username = '{escaped}';"
         ),
@@ -226,6 +233,9 @@ pub fn get_chat_by_username(
                     .map(|dt| dt.to_rfc3339())
                     .unwrap_or_default()
             }),
+        last_msg_local_id: session
+            .get("last_msg_locald_id")
+            .and_then(|v| v.as_i64()),
     })
 }
 
@@ -277,7 +287,8 @@ pub fn find_chats_by_name(
         session_key,
         &format!(
             "SELECT username, type, unread_count, summary, draft, last_timestamp,
-                    sort_timestamp, last_msg_sender, last_sender_display_name, is_hidden
+                    sort_timestamp, last_msg_sender, last_sender_display_name, is_hidden,
+                    last_msg_locald_id
              FROM SessionTable
              WHERE username IN ({usernames})
              ORDER BY sort_timestamp DESC;"
@@ -346,6 +357,9 @@ pub fn find_chats_by_name(
                             .map(|dt| dt.to_rfc3339())
                             .unwrap_or_default()
                     }),
+                last_msg_local_id: session
+                    .get("last_msg_locald_id")
+                    .and_then(|v| v.as_i64()),
             })
         })
         .collect()
