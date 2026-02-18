@@ -2,8 +2,10 @@
 set -euo pipefail
 
 # Compile the Rust server inside Docker and deploy into a running container.
+# Builds in debug mode by default (for debugging). Use --release for optimized builds.
 # Usage:
-#   ./scripts/dev-deploy.sh                 # auto-detect everything
+#   ./scripts/dev-deploy.sh                 # debug build (default)
+#   ./scripts/dev-deploy.sh --release       # release build
 #   ./scripts/dev-deploy.sh --container abc # specify container name/id
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -12,6 +14,7 @@ BUILDER_IMAGE="rust:1.93-bookworm"
 CACHE_VOLUME="agent-wechat-cargo-cache"
 
 CONTAINER=""
+BUILD_MODE="debug"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -19,9 +22,13 @@ while [ "$#" -gt 0 ]; do
       CONTAINER="${2:-}"
       shift 2
       ;;
+    --release)
+      BUILD_MODE="release"
+      shift
+      ;;
     *)
       echo "unknown argument: $1" >&2
-      echo "Usage: $0 [--container name]" >&2
+      echo "Usage: $0 [--container name] [--release]" >&2
       exit 1
       ;;
   esac
@@ -50,7 +57,14 @@ case "$CONTAINER_ARCH" in
     ;;
 esac
 
-echo "==> Building in Docker ($PLATFORM)"
+CARGO_ARGS="--release"
+BINARY_DIR="release"
+if [ "$BUILD_MODE" = "debug" ]; then
+  CARGO_ARGS=""
+  BINARY_DIR="debug"
+fi
+
+echo "==> Building in Docker ($PLATFORM, mode=$BUILD_MODE)"
 docker run --rm \
   --platform "$PLATFORM" \
   -v "$RUST_DIR:/build:ro" \
@@ -58,12 +72,21 @@ docker run --rm \
   -v "${CACHE_VOLUME}-registry:/usr/local/cargo/registry" \
   -w /build \
   "$BUILDER_IMAGE" \
-  cargo build --release
+  cargo build $CARGO_ARGS
 
 echo "==> Deploying to container: $CONTAINER"
 # Extract binary from cache volume via a temporary container
 TMP_CT=$(docker create -v "$CACHE_VOLUME:/target:ro" "$BUILDER_IMAGE")
-docker cp "$TMP_CT:/target/release/agent-server" - | docker cp - "$CONTAINER:/opt/agent-server/"
+docker cp "$TMP_CT:/target/$BINARY_DIR/agent-server" - | docker cp - "$CONTAINER:/opt/agent-server/"
+
+# For debug builds, also extract binary locally for symbol resolution
+if [ "$BUILD_MODE" = "debug" ]; then
+  LOCAL_BIN="$RUST_DIR/target/debug-remote"
+  mkdir -p "$LOCAL_BIN"
+  docker cp "$TMP_CT:/target/$BINARY_DIR/agent-server" "$LOCAL_BIN/agent-server"
+  echo "==> Debug binary extracted to $LOCAL_BIN/agent-server"
+fi
+
 docker rm "$TMP_CT" > /dev/null
 
 # Kill server process — entrypoint restart loop brings it back with new binary

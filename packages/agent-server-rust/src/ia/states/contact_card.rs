@@ -12,7 +12,7 @@ impl IAState for ContactCardStateImpl {
         let wechat_id_label = query_selector(args.a11y, r#"label[name=/^(WeChat ID:|微信号:)$/]"#);
         Ok(IdentifyResult {
             identified: wechat_id_label.is_some(),
-            metadata: None,
+            frame: None,
         })
     }
 

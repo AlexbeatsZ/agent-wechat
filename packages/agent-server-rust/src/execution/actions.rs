@@ -1,35 +1,19 @@
 use crate::ia::selectors::query_selector;
-use crate::ia::types::{A11yNode, Action, SubscriptionEvent};
+use crate::ia::types::{A11yNode, Action, FrameHint, SubscriptionEvent};
 use crate::tools::exec::{exec_command, ExecOptions};
 use std::future::Future;
 use std::pin::Pin;
 
-/// Find the first frame node with window info in the a11y tree.
-/// Used for window activation before clicking/typing.
-fn find_frame_with_window(node: &A11yNode) -> Option<&A11yNode> {
-    if node.role == "frame" && node.window.is_some() && node.bounds.is_some() {
-        return Some(node);
-    }
-    if let Some(children) = &node.children {
-        for child in children {
-            if let Some(found) = find_frame_with_window(child) {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
-
-/// Build --window activation args from a frame node.
-fn window_activate_args(frame: &A11yNode) -> Vec<String> {
-    if let (Some(win), Some(fb)) = (&frame.window, &frame.bounds) {
+/// Build --window activation args from a FrameHint.
+fn window_activate_args(hint: &FrameHint) -> Vec<String> {
+    if let Some(pid) = hint.pid {
         vec![
             "--window".to_string(),
-            win.pid.to_string(),
-            (fb.x as i32).to_string(),
-            (fb.y as i32).to_string(),
-            (fb.width as i32).to_string(),
-            (fb.height as i32).to_string(),
+            pid.to_string(),
+            (hint.bounds.x as i32).to_string(),
+            (hint.bounds.y as i32).to_string(),
+            (hint.bounds.width as i32).to_string(),
+            (hint.bounds.height as i32).to_string(),
             "--".to_string(),
         ]
     } else {
@@ -38,23 +22,21 @@ fn window_activate_args(frame: &A11yNode) -> Vec<String> {
 }
 
 /// Execute a single action against the WeChat UI.
+/// `frame` is the target window hint from the plan — used for window activation.
 /// Returns a BoxFuture to support recursive calls (Sequence action).
 pub fn execute_action<'a>(
     action: &'a Action,
+    frame: Option<&'a FrameHint>,
     options: &'a ExecOptions,
     a11y: &'a A11yNode,
     emit: &'a (dyn Fn(SubscriptionEvent) + Send + Sync),
 ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
     Box::pin(async move {
+        let activate_args = frame.map(|f| window_activate_args(f)).unwrap_or_default();
+
         match action {
             Action::ClickSelector { selector } => {
-                // Find frame for window activation and scoped queries
-                let frame = find_frame_with_window(a11y);
-                let query_root = frame.unwrap_or(a11y);
-
-                // Search frame first, fall back to full tree (popups may render outside frame)
-                let node_match = query_selector(query_root, selector)
-                    .or_else(|| if frame.is_some() { query_selector(a11y, selector) } else { None });
+                let node_match = query_selector(a11y, selector);
 
                 if let Some(node) = node_match {
                     if let Some(bounds) = &node.bounds {
@@ -62,9 +44,7 @@ pub fn execute_action<'a>(
                         let cy = (bounds.y + bounds.height / 2.0).round() as i32;
                         tracing::info!("[action] click selector '{selector}' → ({cx}, {cy})");
 
-                        let mut args = frame
-                            .map(|f| window_activate_args(f))
-                            .unwrap_or_default();
+                        let mut args = activate_args.clone();
                         args.push(cx.to_string());
                         args.push(cy.to_string());
                         let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -78,10 +58,7 @@ pub fn execute_action<'a>(
             }
 
             Action::ClickCoords { x, y } => {
-                let frame = find_frame_with_window(a11y);
-                let mut args = frame
-                    .map(|f| window_activate_args(f))
-                    .unwrap_or_default();
+                let mut args = activate_args.clone();
                 args.push((*x as i32).to_string());
                 args.push((*y as i32).to_string());
                 let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -93,10 +70,7 @@ pub fn execute_action<'a>(
             }
 
             Action::Key { combo } => {
-                let frame = find_frame_with_window(a11y);
-                let mut args = frame
-                    .map(|f| window_activate_args(f))
-                    .unwrap_or_default();
+                let mut args = activate_args.clone();
                 args.push(combo.clone());
                 let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                 exec_command("key", &args_ref, options).await;
@@ -130,7 +104,7 @@ pub fn execute_action<'a>(
 
             Action::Sequence { actions } => {
                 for a in actions {
-                    execute_action(a, options, a11y, emit).await;
+                    execute_action(a, frame, options, a11y, emit).await;
                 }
             }
         }

@@ -1,7 +1,42 @@
-use crate::ia::helpers::extract_active_chat_id;
+use crate::ia::helpers::{extract_active_chat_id, find_main_frame_hint};
 use crate::ia::selectors::query_selector;
 use crate::ia::types::*;
 use super::base::extract_window_control_bounds;
+
+/// Find the More menu dropdown filler (filler containing Settings + Lock buttons).
+/// Searches recursively since the filler may be nested under application > ...
+fn find_more_menu_filler<'a>(node: &'a A11yNode) -> Option<&'a A11yNode> {
+    if let Some(children) = &node.children {
+        for child in children {
+            if child.role == "filler"
+                && query_selector(child, r#"push-button[name="Settings"]"#).is_some()
+                && query_selector(child, r#"push-button[name="Lock"]"#).is_some()
+            {
+                return Some(child);
+            }
+            // Recurse, but skip frame nodes (the filler is outside the WeChat frame)
+            if child.role != "frame" {
+                if let Some(found) = find_more_menu_filler(child) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract More button bounds and Settings menu item bounds (when More dropdown is open).
+fn extract_more_menu_bounds(a11y: &A11yNode, state: &mut AppState) {
+    // More button in Navigation toolbar
+    state.main_window.more_button_bounds =
+        query_selector(a11y, r#"tool-bar[name="Navigation"] push-button[name="More"]"#)
+            .and_then(|n| n.bounds.clone());
+
+    // Settings menu item from More dropdown (only when dropdown is open)
+    state.main_window.settings_menu_item_bounds = find_more_menu_filler(a11y)
+        .and_then(|filler| query_selector(filler, r#"push-button[name="Settings"]"#))
+        .and_then(|n| n.bounds.clone());
+}
 
 fn is_chat_view(a11y: &A11yNode) -> bool {
     let main_btn = query_selector(a11y, r#"push-button[name="Weixin"]"#)
@@ -32,12 +67,12 @@ impl IAState for ChatState {
 
     fn identify(&self, args: &IdentifyArgs) -> Result<IdentifyResult, String> {
         if !is_chat_view(args.a11y) {
-            return Ok(IdentifyResult { identified: false, metadata: None });
+            return Ok(IdentifyResult { identified: false, frame: None });
         }
         if find_selected_chat_item(args.a11y).is_some() {
-            return Ok(IdentifyResult { identified: false, metadata: None });
+            return Ok(IdentifyResult { identified: false, frame: None });
         }
-        Ok(IdentifyResult { identified: true, metadata: None })
+        Ok(IdentifyResult { identified: true, frame: find_main_frame_hint(args.a11y) })
     }
 
     fn reduce(&self, args: &ReduceArgs) -> AppState {
@@ -51,6 +86,7 @@ impl IAState for ChatState {
         state.main_window.close_button_bounds = wb.close_button_bounds;
         state.main_window.minimize_button_bounds = wb.minimize_button_bounds;
         state.main_window.maximize_button_bounds = wb.maximize_button_bounds;
+        extract_more_menu_bounds(args.a11y, &mut state);
         state
     }
 }
@@ -64,12 +100,12 @@ impl IAState for ChatOpenState {
 
     fn identify(&self, args: &IdentifyArgs) -> Result<IdentifyResult, String> {
         if !is_chat_view(args.a11y) {
-            return Ok(IdentifyResult { identified: false, metadata: None });
+            return Ok(IdentifyResult { identified: false, frame: None });
         }
         if find_selected_chat_item(args.a11y).is_none() {
-            return Ok(IdentifyResult { identified: false, metadata: None });
+            return Ok(IdentifyResult { identified: false, frame: None });
         }
-        Ok(IdentifyResult { identified: true, metadata: None })
+        Ok(IdentifyResult { identified: true, frame: find_main_frame_hint(args.a11y) })
     }
 
     fn reduce(&self, args: &ReduceArgs) -> AppState {
@@ -127,6 +163,7 @@ impl IAState for ChatOpenState {
         state.main_window.close_button_bounds = wb.close_button_bounds;
         state.main_window.minimize_button_bounds = wb.minimize_button_bounds;
         state.main_window.maximize_button_bounds = wb.maximize_button_bounds;
+        extract_more_menu_bounds(args.a11y, &mut state);
         state
     }
 }

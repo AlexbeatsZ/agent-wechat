@@ -16,6 +16,7 @@ use crate::execution::run_execution_loop;
 use crate::ia::types::*;
 use crate::ia::{find_state_by_id, identify_states};
 use crate::plans::login::{LoginParams, LoginPlan};
+use crate::plans::logout::{LogoutParams, LogoutPlan};
 use crate::sessions::manager::get_session;
 use crate::tools::a11y::get_a11y_desktop;
 use crate::tools::exec::ExecOptions;
@@ -80,7 +81,6 @@ pub async fn auth_status() -> Json<serde_json::Value> {
                 prev: &context.state,
                 a11y: &a11y,
                 screenshot: &screenshot_bytes,
-                metadata: mw.metadata.as_ref(),
             });
         }
     }
@@ -100,6 +100,82 @@ pub async fn auth_status() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "isLoggedIn": context.state.main_window.is_logged_in,
         "loggedInUser": session.logged_in_user
+    }))
+}
+
+/// Log out of WeChat via FSM execution loop.
+pub async fn logout() -> Json<serde_json::Value> {
+    let session = match get_session("default") {
+        Some(s) => s,
+        None => {
+            return Json(serde_json::json!({
+                "success": false,
+                "error": "No session available"
+            }))
+        }
+    };
+
+    // Quick auth check first
+    let exec_options = ExecOptions {
+        session: Some(session.clone()),
+        timeout_ms: 30_000,
+    };
+
+    let a11y = match get_a11y_desktop(&exec_options).await {
+        Ok(tree) => tree,
+        Err(e) => {
+            return Json(serde_json::json!({
+                "success": false,
+                "error": format!("Failed to get a11y tree: {e}")
+            }))
+        }
+    };
+
+    let screenshot = capture_screenshot(&exec_options).await.unwrap_or_default();
+    let identified = identify_states(&a11y, &screenshot);
+
+    // Load persisted state and check if logged in
+    let mut context = {
+        let db = get_db();
+        create_context(session.clone(), &db)
+    };
+
+    if let Some(ref mw) = identified.main_window {
+        if let Some(state_impl) = find_state_by_id(&mw.state_id) {
+            let screenshot_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&screenshot)
+                .unwrap_or_default();
+            context.state = state_impl.reduce(&ReduceArgs {
+                prev: &context.state,
+                a11y: &a11y,
+                screenshot: &screenshot_bytes,
+            });
+        }
+    }
+
+    if !context.state.main_window.is_logged_in {
+        return Json(serde_json::json!({
+            "success": false,
+            "error": "Not logged in"
+        }));
+    }
+
+    // Run logout FSM
+    let cancel = CancellationToken::new();
+    let plan = LogoutPlan;
+    let params = LogoutParams;
+    let emit = |_event: SubscriptionEvent| {};
+    let (result, _) = run_execution_loop(&plan, &params, &mut context, &emit, cancel).await;
+
+    if result.success {
+        // Clear logged_in_user from session
+        let db = get_db();
+        crate::db::queries::update_session_logged_in_user(&db, &session.id, None);
+    }
+
+    Json(serde_json::json!({
+        "success": result.success,
+        "error": result.error
     }))
 }
 

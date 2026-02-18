@@ -249,6 +249,24 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
       }
     },
 
+    logoutAccount: async ({ cfg, accountId }: {
+      cfg: any;
+      accountId: string;
+    }) => {
+      const account = resolveWeChatAccount(
+        cfg as Record<string, unknown>,
+        accountId ?? undefined,
+      );
+      if (!account?.serverUrl) return { cleared: false };
+      const client = new WeChatClient({ baseUrl: account.serverUrl });
+      try {
+        const result = await client.logout();
+        return { cleared: result.success, loggedOut: result.success };
+      } catch {
+        return { cleared: false };
+      }
+    },
+
     loginWithQrWait: async ({ accountId, timeoutMs }: {
       cfg: any;
       accountId: string;

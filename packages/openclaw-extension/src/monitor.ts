@@ -33,6 +33,11 @@ type ProcessedMessage = {
   hasMedia: boolean;
 };
 
+/** Official/service accounts have IDs starting with gh_ */
+function isOfficialAccount(chatId: string): boolean {
+  return chatId.startsWith("gh_");
+}
+
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
@@ -158,8 +163,10 @@ export async function startWeChatMonitor(
         continue;
       }
 
-      // Filter to chats with unreads
-      const unreadChats = chats.filter((c) => c.unreadCount > 0);
+      // Filter to chats with unreads (skip official accounts)
+      const unreadChats = chats.filter(
+        (c) => c.unreadCount > 0 && !isOfficialAccount(c.username ?? c.id),
+      );
       if (unreadChats.length > 0) {
         log?.info?.(
           `[wechat:${account.accountId}] ${unreadChats.length} chat(s) with unreads`,
@@ -184,6 +191,7 @@ export async function startWeChatMonitor(
       for (const chat of chats) {
         if (abortSignal.aborted) break;
         const chatId = chat.username ?? chat.id;
+        if (isOfficialAccount(chatId)) continue; // skip official accounts
         const prevSeen = lastSeenId.get(chatId);
         if (prevSeen === undefined) continue; // not tracked yet
         if (unreadChats.some((c) => (c.username ?? c.id) === chatId)) continue; // already processed

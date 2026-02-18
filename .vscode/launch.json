@@ -2,18 +2,18 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Attach to Container",
-      "type": "node",
-      "request": "attach",
-      "port": 9229,
-      "restart": true,
-      "sourceMaps": true,
-      "localRoot": "${workspaceFolder}/packages/agent-server",
-      "remoteRoot": "/opt/agent-server",
-      "skipFiles": [
-        "<node_internals>/**",
-        "**/node_modules/**"
-      ]
+      "name": "Attach to Container (Rust)",
+      "type": "lldb",
+      "request": "custom",
+      "targetCreateCommands": [
+        "target create ${workspaceFolder}/packages/agent-server-rust/target/debug-remote/agent-server"
+      ],
+      "processCreateCommands": [
+        "gdb-remote localhost:1234"
+      ],
+      "sourceMap": {
+        "/build": "${workspaceFolder}/packages/agent-server-rust"
+      }
     },
     {
       "name": "Debug CLI",

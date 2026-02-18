@@ -67,7 +67,7 @@ impl Plan for LoginPlan {
         if state.popup.is_some() && identified.popup.is_some() {
             return Some(SelectedAction {
                 action: actions::dismiss_popup(),
-                metadata: None,
+                frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
             });
         }
 
@@ -89,11 +89,11 @@ impl Plan for LoginPlan {
                                 },
                                 actions::wait(500),
                             ]),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         });
                     }
                 }
-                Some(SelectedAction { action: actions::wait(500), metadata: None })
+                Some(SelectedAction { action: actions::wait(500), frame: None })
             }
 
             MainWindowView::LoginAccount => {
@@ -102,7 +102,10 @@ impl Plan for LoginPlan {
                 } else {
                     actions::click_login()
                 };
-                Some(SelectedAction { action, metadata: None })
+                Some(SelectedAction {
+                    action,
+                    frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                })
             }
 
             MainWindowView::LoginPhoneConfirm => {
@@ -121,14 +124,14 @@ impl Plan for LoginPlan {
                             },
                             actions::wait(500),
                         ]),
-                        metadata: None,
+                        frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                     });
                 }
-                Some(SelectedAction { action: actions::wait(500), metadata: None })
+                Some(SelectedAction { action: actions::wait(500), frame: None })
             }
 
             MainWindowView::LoginLoading => {
-                Some(SelectedAction { action: actions::wait(500), metadata: None })
+                Some(SelectedAction { action: actions::wait(500), frame: None })
             }
 
             MainWindowView::Chat | MainWindowView::ChatOpen => {
@@ -141,13 +144,13 @@ impl Plan for LoginPlan {
                                 actions::maximize(),
                                 actions::wait(500),
                             ]),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         })
                     }
 
                     LoginPhase::Maximized => {
                         plan_state.phase = LoginPhase::DetectingUser;
-                        Some(SelectedAction { action: actions::wait(500), metadata: None })
+                        Some(SelectedAction { action: actions::wait(500), frame: None })
                     }
 
                     LoginPhase::DetectingUser => {
@@ -206,7 +209,7 @@ impl Plan for LoginPlan {
                                             },
                                             actions::wait_short(),
                                         ]),
-                                        metadata: None,
+                                        frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                                     });
                                 }
                             }
@@ -225,7 +228,7 @@ impl Plan for LoginPlan {
                                     },
                                     actions::wait_short(),
                                 ]),
-                                metadata: None,
+                                frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                             });
                         }
 
@@ -242,11 +245,11 @@ impl Plan for LoginPlan {
                                     },
                                     actions::wait_short(),
                                 ]),
-                                metadata: None,
+                                frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                             });
                         }
 
-                        Some(SelectedAction { action: actions::wait(2000), metadata: None })
+                        Some(SelectedAction { action: actions::wait(2000), frame: None })
                     }
 
                     LoginPhase::ExtractingKeys => {
@@ -290,12 +293,12 @@ impl Plan for LoginPlan {
                                 },
                                 actions::wait_short(),
                             ]),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         })
                     }
 
                     LoginPhase::Done => {
-                        Some(SelectedAction { action: actions::wait_short(), metadata: None })
+                        Some(SelectedAction { action: actions::wait_short(), frame: None })
                     }
                 }
             }

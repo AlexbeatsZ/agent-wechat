@@ -3,6 +3,8 @@
 # ============================================
 FROM rust:1.93-bookworm AS builder
 
+ARG BUILD_MODE=release
+
 WORKDIR /build
 
 # Install build dependencies for bundled sqlcipher + openssl
@@ -14,14 +16,17 @@ RUN apt-get update && apt-get install -y \
 COPY agent-server-rust/Cargo.toml agent-server-rust/Cargo.lock* ./
 # Create dummy src for dependency build
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
-RUN cargo build --release 2>/dev/null || true
+RUN if [ "$BUILD_MODE" = "debug" ]; then cargo build 2>/dev/null || true; else cargo build --release 2>/dev/null || true; fi
 # Remove dummy build artifacts
-RUN rm -rf src target/release/deps/agent_server*
+RUN rm -rf src target/release/deps/agent_server* target/debug/deps/agent_server*
 
 # Copy actual source and migrations, then build
 COPY agent-server-rust/src ./src
 COPY agent-server-rust/migrations ./migrations
-RUN cargo build --release
+RUN if [ "$BUILD_MODE" = "debug" ]; then cargo build; else cargo build --release; fi
+
+# Copy binary to a known location regardless of build mode
+RUN mkdir -p /output && cp target/${BUILD_MODE}/agent-server /output/agent-server
 
 # ============================================
 # Stage 2: Final runtime image
@@ -104,7 +109,15 @@ RUN chmod +x /opt/tools/*
 # ============================================
 # Copy Rust binary from builder
 # ============================================
-COPY --from=builder /build/target/release/agent-server /opt/agent-server/agent-server
+COPY --from=builder /output/agent-server /opt/agent-server/agent-server
+
+# ============================================
+# Debug support (gdbserver for remote debugging)
+# ============================================
+ARG BUILD_MODE=release
+RUN if [ "$BUILD_MODE" = "debug" ]; then \
+      apt-get update && apt-get install -y gdbserver && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # ============================================
 # Data directory for SQLite
@@ -126,6 +139,6 @@ ENV AGENT_PORT=6174
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 6174 5900
+EXPOSE 6174 5900 1234
 
 ENTRYPOINT ["/entrypoint.sh"]

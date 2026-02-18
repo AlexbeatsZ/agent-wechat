@@ -106,7 +106,7 @@ impl Plan for SendMessagePlan {
         if state.popup.is_some() && identified.popup.is_some() {
             return Some(SelectedAction {
                 action: actions::dismiss_popup(),
-                metadata: None,
+                frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
             });
         }
 
@@ -139,7 +139,7 @@ impl Plan for SendMessagePlan {
                     if !skipped {
                         return Some(SelectedAction {
                             action: actions::wait_short(),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         });
                     }
                     continue;
@@ -171,7 +171,7 @@ impl Plan for SendMessagePlan {
                     if let Some(bounds) = &edit_node.bounds {
                         return Some(SelectedAction {
                             action: actions::click_bounds(bounds),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         });
                     }
                     return None;
@@ -193,7 +193,7 @@ impl Plan for SendMessagePlan {
                                 Action::Wait { ms: 100 },
                                 Action::Key { combo: "Return".to_string() },
                             ]),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -209,7 +209,7 @@ impl Plan for SendMessagePlan {
                                 Action::Wait { ms: 100 },
                                 Action::Key { combo: "Return".to_string() },
                             ]),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -222,7 +222,7 @@ impl Plan for SendMessagePlan {
                                 Action::Wait { ms: 100 },
                                 Action::Key { combo: "Return".to_string() },
                             ]),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -246,7 +246,7 @@ impl Plan for SendMessagePlan {
                         plan_state.phase = SendMessagePhase::Done;
                         return Some(SelectedAction {
                             action: actions::wait_short(),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -257,7 +257,7 @@ impl Plan for SendMessagePlan {
 
                     return Some(SelectedAction {
                         action: actions::wait_short(),
-                        metadata: None,
+                        frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                     });
                 }
 

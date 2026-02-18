@@ -13,6 +13,7 @@ ARM64_URL="https://dldir1v6.qq.com/weixin/Universal/Linux/WeChatLinux_arm64.deb"
 FORCE=0
 ARCH_ONLY=""
 NO_CACHE=0
+BUILD_MODE="release"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -25,6 +26,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --no-cache)
       NO_CACHE=1
+      shift
+      ;;
+    --debug)
+      BUILD_MODE="debug"
       shift
       ;;
     --arch)
@@ -117,6 +122,7 @@ build_arch() {
   docker buildx build \
     ${NO_CACHE:+--no-cache} \
     --platform "$platform" \
+    --build-arg BUILD_MODE="$BUILD_MODE" \
     -t "$tag" \
     --load \
     -f "$DOCKERFILE" \

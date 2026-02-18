@@ -64,7 +64,7 @@ echo ""
 # Build inside a Docker container matching the target platform.
 # Cargo registry + target dir cached in a named volume for fast incremental builds.
 build_and_deploy() {
-  echo "==> Building (docker)..."
+  echo "==> Building (docker, debug)..."
   docker run --rm \
     --platform "$PLATFORM" \
     -v "$RUST_DIR:/build:ro" \
@@ -72,13 +72,19 @@ build_and_deploy() {
     -v "${CACHE_VOLUME}-registry:/usr/local/cargo/registry" \
     -w /build \
     "$BUILDER_IMAGE" \
-    cargo build --release
+    cargo build
 
   echo "==> Deploying to $CONTAINER"
   # Extract binary from cache volume via a temporary container
   local tmp_ct
   tmp_ct=$(docker create -v "$CACHE_VOLUME:/target:ro" "$BUILDER_IMAGE")
-  docker cp "$tmp_ct:/target/release/agent-server" - | docker cp - "$CONTAINER:/opt/agent-server/"
+  docker cp "$tmp_ct:/target/debug/agent-server" - | docker cp - "$CONTAINER:/opt/agent-server/"
+
+  # Extract binary locally for symbol resolution (debugger)
+  local local_bin="$RUST_DIR/target/debug-remote"
+  mkdir -p "$local_bin"
+  docker cp "$tmp_ct:/target/debug/agent-server" "$local_bin/agent-server"
+
   docker rm "$tmp_ct" > /dev/null
 
   # Kill server process — entrypoint restart loop brings it back with new binary

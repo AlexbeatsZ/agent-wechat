@@ -10,6 +10,7 @@ use states::chat::CHAT_STATES;
 use states::contact_card::CONTACT_CARD_STATE;
 use states::login::LOGIN_STATES;
 use states::popup::POPUP_STATES;
+use states::settings::SETTINGS_STATES;
 
 /// Look up an IAState implementation by its id string.
 pub fn find_state_by_id(id: &str) -> Option<&'static dyn IAState> {
@@ -28,6 +29,11 @@ pub fn find_state_by_id(id: &str) -> Option<&'static dyn IAState> {
             return Some(s.as_ref());
         }
     }
+    for s in SETTINGS_STATES.iter() {
+        if s.id() == id {
+            return Some(s.as_ref());
+        }
+    }
     if CONTACT_CARD_STATE.id() == id {
         return Some(&**CONTACT_CARD_STATE);
     }
@@ -42,6 +48,7 @@ pub fn identify_states(a11y_tree: &A11yNode, screenshot: &str) -> IdentifiedStat
     let mut main_window: Option<IdentifiedState> = None;
     let mut popup: Option<IdentifiedState> = None;
     let mut contact_card: Option<IdentifiedState> = None;
+    let mut settings: Option<IdentifiedState> = None;
 
     let args = IdentifyArgs {
         a11y: a11y_tree,
@@ -55,6 +62,7 @@ pub fn identify_states(a11y_tree: &A11yNode, screenshot: &str) -> IdentifiedStat
         .chain(LOGIN_STATES.iter().map(|s| s.as_ref() as &dyn IAState))
         .chain(POPUP_STATES.iter().map(|s| s.as_ref() as &dyn IAState))
         .chain(std::iter::once(&**CONTACT_CARD_STATE as &dyn IAState))
+        .chain(SETTINGS_STATES.iter().map(|s| s.as_ref() as &dyn IAState))
         .collect();
 
     for state in &all_states {
@@ -66,21 +74,28 @@ pub fn identify_states(a11y_tree: &A11yNode, screenshot: &str) -> IdentifiedStat
                         main_window = Some(IdentifiedState {
                             state_id: state.id().to_string(),
                             fsm: fsm.to_string(),
-                            metadata: result.metadata,
+                            frame: result.frame,
                         });
                     }
                     "popup" if popup.is_none() => {
                         popup = Some(IdentifiedState {
                             state_id: state.id().to_string(),
                             fsm: fsm.to_string(),
-                            metadata: result.metadata,
+                            frame: result.frame,
                         });
                     }
                     "contactCard" if contact_card.is_none() => {
                         contact_card = Some(IdentifiedState {
                             state_id: state.id().to_string(),
                             fsm: fsm.to_string(),
-                            metadata: result.metadata,
+                            frame: result.frame,
+                        });
+                    }
+                    "settings" if settings.is_none() => {
+                        settings = Some(IdentifiedState {
+                            state_id: state.id().to_string(),
+                            fsm: fsm.to_string(),
+                            frame: result.frame,
                         });
                     }
                     _ => {}
@@ -89,8 +104,8 @@ pub fn identify_states(a11y_tree: &A11yNode, screenshot: &str) -> IdentifiedStat
             _ => {}
         }
 
-        // Stop if we found all three
-        if main_window.is_some() && popup.is_some() && contact_card.is_some() {
+        // Stop if we found all slots
+        if main_window.is_some() && popup.is_some() && contact_card.is_some() && settings.is_some() {
             break;
         }
     }
@@ -99,5 +114,6 @@ pub fn identify_states(a11y_tree: &A11yNode, screenshot: &str) -> IdentifiedStat
         main_window,
         popup,
         contact_card,
+        settings,
     }
 }

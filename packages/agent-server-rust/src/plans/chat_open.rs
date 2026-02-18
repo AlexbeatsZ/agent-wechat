@@ -87,7 +87,7 @@ impl Plan for ChatOpenPlan {
         if state.popup.is_some() && identified.popup.is_some() {
             return Some(SelectedAction {
                 action: actions::dismiss_popup(),
-                metadata: None,
+                frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
             });
         }
 
@@ -128,7 +128,7 @@ impl Plan for ChatOpenPlan {
                         if !skipped {
                             return Some(SelectedAction {
                                 action: actions::wait_short(),
-                                metadata: None,
+                                frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                             });
                         }
                         continue;
@@ -139,7 +139,7 @@ impl Plan for ChatOpenPlan {
                     tracing::info!("[chat_open] Opening → Done (no clear_unreads)");
                     return Some(SelectedAction {
                         action: actions::wait_short(),
-                        metadata: None,
+                        frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                     });
                 }
 
@@ -163,7 +163,7 @@ impl Plan for ChatOpenPlan {
                     if let Some(bounds) = &edit_node.bounds {
                         return Some(SelectedAction {
                             action: actions::click_bounds(bounds),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         });
                     }
                     continue;
@@ -197,13 +197,13 @@ impl Plan for ChatOpenPlan {
                     if seq.is_empty() {
                         return Some(SelectedAction {
                             action: actions::wait_short(),
-                            metadata: None,
+                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                         });
                     }
 
                     return Some(SelectedAction {
                         action: Action::Sequence { actions: seq },
-                        metadata: None,
+                        frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
                     });
                 }
 

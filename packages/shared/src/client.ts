@@ -123,6 +123,10 @@ export class WeChatClient {
     return this.post("/api/status/login");
   }
 
+  async logout(): Promise<{ success: boolean; error?: string }> {
+    return this.post("/api/status/logout");
+  }
+
   // ---- Chats ----
 
   async listChats(

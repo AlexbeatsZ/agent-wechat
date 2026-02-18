@@ -114,6 +114,13 @@ pub async fn open_chat(
         }));
     }
 
+    if chat_id.starts_with("gh_") {
+        return Json(serde_json::json!({
+            "ok": false,
+            "error": "Opening official accounts is not supported"
+        }));
+    }
+
     let mut context = {
         let db = get_db();
         create_context(session, &db)

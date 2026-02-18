@@ -1,3 +1,4 @@
+use crate::ia::helpers::find_main_frame_hint;
 use crate::ia::selectors::{query_selector};
 use crate::ia::types::*;
 use crate::tools::qr::decode_qr_from_base64;
@@ -13,21 +14,21 @@ impl IAState for LoginQrState {
     fn identify(&self, args: &IdentifyArgs) -> Result<IdentifyResult, String> {
         let scan_label = query_selector(args.a11y, r#"label[name*="Scan to log in"]"#);
         if scan_label.is_none() {
-            return Ok(IdentifyResult { identified: false, metadata: None });
+            return Ok(IdentifyResult { identified: false, frame: None });
         }
 
         let has_transfer = query_selector(args.a11y, r#"push-button[name*="Transfer files only"]"#).is_some();
         if !has_transfer {
-            return Ok(IdentifyResult { identified: false, metadata: None });
+            return Ok(IdentifyResult { identified: false, frame: None });
         }
 
         let qr = decode_qr_from_base64(args.screenshot);
         let has_wechat_qr = qr.as_ref().map(|r| r.data.starts_with("http://weixin.qq.com/x/")).unwrap_or(false);
         if !has_wechat_qr {
-            return Ok(IdentifyResult { identified: false, metadata: None });
+            return Ok(IdentifyResult { identified: false, frame: None });
         }
 
-        Ok(IdentifyResult { identified: true, metadata: None })
+        Ok(IdentifyResult { identified: true, frame: find_main_frame_hint(args.a11y) })
     }
 
     fn reduce(&self, args: &ReduceArgs) -> AppState {
@@ -60,15 +61,15 @@ impl IAState for LoginAccountState {
         let log_in_btn = query_selector(args.a11y, r#"push-button[name="Log In"]"#)
             .or_else(|| query_selector(args.a11y, r#"push-button[name="Open WeChat"]"#));
         if log_in_btn.is_none() {
-            return Ok(IdentifyResult { identified: false, metadata: None });
+            return Ok(IdentifyResult { identified: false, frame: None });
         }
 
         let has_switch = query_selector(args.a11y, r#"push-button[name="Switch Account"]"#).is_some();
         if !has_switch {
-            return Ok(IdentifyResult { identified: false, metadata: None });
+            return Ok(IdentifyResult { identified: false, frame: None });
         }
 
-        Ok(IdentifyResult { identified: true, metadata: None })
+        Ok(IdentifyResult { identified: true, frame: find_main_frame_hint(args.a11y) })
     }
 
     fn reduce(&self, args: &ReduceArgs) -> AppState {
@@ -94,7 +95,10 @@ impl IAState for LoginPhoneConfirmState {
 
     fn identify(&self, args: &IdentifyArgs) -> Result<IdentifyResult, String> {
         let confirm = query_selector(args.a11y, r#"label[name=/Comfirm on phone|Confirm.*phone|手机确认/i]"#);
-        Ok(IdentifyResult { identified: confirm.is_some(), metadata: None })
+        Ok(IdentifyResult {
+            identified: confirm.is_some(),
+            frame: if confirm.is_some() { find_main_frame_hint(args.a11y) } else { None },
+        })
     }
 
     fn reduce(&self, args: &ReduceArgs) -> AppState {
@@ -115,10 +119,10 @@ impl IAState for LoginLoadingState {
     fn identify(&self, args: &IdentifyArgs) -> Result<IdentifyResult, String> {
         // Case 1: "Entering" or "Loading X%" labels
         if query_selector(args.a11y, r#"label[name="Entering"]"#).is_some() {
-            return Ok(IdentifyResult { identified: true, metadata: None });
+            return Ok(IdentifyResult { identified: true, frame: find_main_frame_hint(args.a11y) });
         }
         if query_selector(args.a11y, r#"label[name*="Loading"]"#).is_some() {
-            return Ok(IdentifyResult { identified: true, metadata: None });
+            return Ok(IdentifyResult { identified: true, frame: find_main_frame_hint(args.a11y) });
         }
 
         // Case 2: Nav buttons but no Chats list
@@ -128,10 +132,10 @@ impl IAState for LoginLoadingState {
         let has_chats = query_selector(args.a11y, r#"list[name="Chats"]"#).is_some();
 
         if main_btn.is_some() && has_contacts && !has_chats {
-            return Ok(IdentifyResult { identified: true, metadata: None });
+            return Ok(IdentifyResult { identified: true, frame: find_main_frame_hint(args.a11y) });
         }
 
-        Ok(IdentifyResult { identified: false, metadata: None })
+        Ok(IdentifyResult { identified: false, frame: None })
     }
 
     fn reduce(&self, args: &ReduceArgs) -> AppState {

@@ -13,6 +13,7 @@ set -e
 CONTAINER_NAME="agent-wechat"
 DEFAULT_PORT=6174
 VNC_PORT=5900
+DEBUG_GDB=1
 
 # Determine architecture
 ARCH=$(uname -m)
@@ -43,12 +44,19 @@ fi
 echo "Starting $CONTAINER_NAME in dev mode..."
 echo "  Mounting: $DOCKER_TOOLS → /opt/tools"
 
+DEBUG_ARGS=""
+if [ "$DEBUG_GDB" -eq 1 ]; then
+  DEBUG_ARGS="-e DEBUG_GDB=1 -p 1234:1234"
+  echo "  Debug: gdbserver on port 1234"
+fi
+
 docker run -d \
   --name "$CONTAINER_NAME" \
   --security-opt seccomp=unconfined \
   --cap-add=SYS_PTRACE \
   -p "$DEFAULT_PORT:$DEFAULT_PORT" \
   -p "$VNC_PORT:$VNC_PORT" \
+  $DEBUG_ARGS \
   -v "$CONTAINER_NAME-data:/data" \
   -v "$CONTAINER_NAME-wechat-home:/home/wechat" \
   -v "$DOCKER_TOOLS:/opt/tools" \

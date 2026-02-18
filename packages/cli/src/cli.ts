@@ -160,6 +160,19 @@ authCmd
   });
 
 authCmd
+  .command("logout")
+  .description("Log out of WeChat")
+  .action(async () => {
+    const client = getClient();
+    const result = await client.logout();
+    if (result.success) {
+      console.log("Logged out");
+    } else {
+      console.log(`Logout failed: ${result.error ?? "unknown error"}`);
+    }
+  });
+
+authCmd
   .command("status")
   .description("Check login status")
   .action(async () => {

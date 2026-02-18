@@ -125,7 +125,7 @@ where
 
         // Log identified states
         tracing::info!(
-            "[exec] step={step} mainWindow={}, popup={}, contactCard={}",
+            "[exec] step={step} mainWindow={}, popup={}, contactCard={}, settings={}",
             identified
                 .main_window
                 .as_ref()
@@ -138,6 +138,11 @@ where
                 .unwrap_or("none"),
             identified
                 .contact_card
+                .as_ref()
+                .map(|s| s.state_id.as_str())
+                .unwrap_or("none"),
+            identified
+                .settings
                 .as_ref()
                 .map(|s| s.state_id.as_str())
                 .unwrap_or("none"),
@@ -155,7 +160,6 @@ where
                     prev: &prev_state,
                     a11y: &a11y,
                     screenshot: &screenshot_bytes,
-                    metadata: mw.metadata.as_ref(),
                 });
             }
         }
@@ -167,7 +171,6 @@ where
                     prev: &current,
                     a11y: &a11y,
                     screenshot: &screenshot_bytes,
-                    metadata: popup.metadata.as_ref(),
                 });
             }
         } else {
@@ -181,11 +184,23 @@ where
                     prev: &current,
                     a11y: &a11y,
                     screenshot: &screenshot_bytes,
-                    metadata: cc.metadata.as_ref(),
                 });
             }
         } else {
             context.state.contact_card = None;
+        }
+
+        if let Some(ref s) = identified.settings {
+            if let Some(state_impl) = find_state_by_id(&s.state_id) {
+                let current = context.state.clone();
+                context.state = state_impl.reduce(&ReduceArgs {
+                    prev: &current,
+                    a11y: &a11y,
+                    screenshot: &screenshot_bytes,
+                });
+            }
+        } else {
+            context.state.settings = None;
         }
 
         // 4. EFFECTS
@@ -224,7 +239,7 @@ where
 
         // 7. EXECUTE: run the action (emits fire inline via callback)
         if let Some(sel) = &selected {
-            actions::execute_action(&sel.action, &exec_options, &a11y, emit).await;
+            actions::execute_action(&sel.action, sel.frame.as_ref(), &exec_options, &a11y, emit).await;
         }
 
         // 8. GOAL CHECK (after action)

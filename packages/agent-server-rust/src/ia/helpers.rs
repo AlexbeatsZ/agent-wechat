@@ -1,5 +1,5 @@
 use super::selectors::query_selector;
-use super::types::{A11yNode, Bounds};
+use super::types::{A11yNode, Bounds, FrameHint};
 
 /// Generate a stable hash from a string.
 fn hash_string(s: &str) -> String {
@@ -34,4 +34,21 @@ pub fn get_bounds_center(bounds: &Bounds) -> (f64, f64) {
         (bounds.x + bounds.width / 2.0).round(),
         (bounds.y + bounds.height / 2.0).round(),
     )
+}
+
+/// Extract a FrameHint from an a11y frame node.
+pub fn frame_hint_from_node(node: &A11yNode) -> Option<FrameHint> {
+    let bounds = node.bounds.clone()?;
+    Some(FrameHint {
+        name: if node.name.is_empty() { None } else { Some(node.name.clone()) },
+        bounds,
+        pid: node.window.as_ref().map(|w| w.pid),
+    })
+}
+
+/// Find the main WeChat frame and return a FrameHint.
+pub fn find_main_frame_hint(a11y: &A11yNode) -> Option<FrameHint> {
+    let frame = query_selector(a11y, r#"frame[name="WeChat"]"#)
+        .or_else(|| query_selector(a11y, r#"frame[name="微信"]"#));
+    frame.and_then(|f| frame_hint_from_node(f))
 }

@@ -25,6 +25,7 @@ pub fn build_router() -> Router {
         .route("/api/status", get(status::get_status))
         .route("/api/status/auth", get(status::auth_status))
         .route("/api/status/login", post(status::login))
+        .route("/api/status/logout", post(status::logout))
         // Chats
         .route("/api/chats", get(chats::list_chats))
         .route("/api/chats/{id}", get(chats::get_chat))

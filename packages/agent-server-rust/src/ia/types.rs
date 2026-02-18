@@ -6,7 +6,9 @@ use ts_rs::TS;
 // A11y Tree Types (from a11y-dump) — internal only
 // ============================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Bounds {
     pub x: f64,
     pub y: f64,
@@ -142,6 +144,10 @@ pub struct MainWindowState {
     pub minimize_button_bounds: Option<Bounds>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub maximize_button_bounds: Option<Bounds>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub more_button_bounds: Option<Bounds>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings_menu_item_bounds: Option<Bounds>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +179,7 @@ pub struct AppState {
     pub main_window: MainWindowState,
     pub popup: Option<PopupState>,
     pub contact_card: Option<ContactCardState>,
+    pub settings: Option<SettingsState>,
 }
 
 impl Default for AppState {
@@ -193,9 +200,12 @@ impl Default for AppState {
                 close_button_bounds: None,
                 minimize_button_bounds: None,
                 maximize_button_bounds: None,
+                more_button_bounds: None,
+                settings_menu_item_bounds: None,
             },
             popup: None,
             contact_card: None,
+            settings: None,
         }
     }
 }
@@ -209,16 +219,24 @@ pub struct IdentifyArgs<'a> {
     pub screenshot: &'a str,
 }
 
+/// Frame hint — identifies which window to activate before executing an action.
+/// Extracted by IA states during identify and passed through plans to execute_action.
+#[derive(Debug, Clone)]
+pub struct FrameHint {
+    pub name: Option<String>,
+    pub bounds: Bounds,
+    pub pid: Option<i64>,
+}
+
 pub struct IdentifyResult {
     pub identified: bool,
-    pub metadata: Option<serde_json::Value>,
+    pub frame: Option<FrameHint>,
 }
 
 pub struct ReduceArgs<'a> {
     pub prev: &'a AppState,
     pub a11y: &'a A11yNode,
     pub screenshot: &'a [u8],
-    pub metadata: Option<&'a serde_json::Value>,
 }
 
 /// IAState defines a UI state in the FSM.
@@ -237,7 +255,7 @@ pub trait IAState: Send + Sync {
 pub struct IdentifiedState {
     pub state_id: String,
     pub fsm: String,
-    pub metadata: Option<serde_json::Value>,
+    pub frame: Option<FrameHint>,
 }
 
 #[derive(Debug, Clone)]
@@ -245,6 +263,7 @@ pub struct IdentifiedStates {
     pub main_window: Option<IdentifiedState>,
     pub popup: Option<IdentifiedState>,
     pub contact_card: Option<IdentifiedState>,
+    pub settings: Option<IdentifiedState>,
 }
 
 // ============================================
@@ -261,7 +280,7 @@ pub enum Effect {
 
 pub struct SelectedAction {
     pub action: Action,
-    pub metadata: Option<serde_json::Value>,
+    pub frame: Option<FrameHint>,
 }
 
 // ============================================
@@ -386,6 +405,28 @@ pub struct Message {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub reply: Option<ReplyInfo>,
+}
+
+// ============================================
+// Settings types (shared — generates TypeScript)
+// ============================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SettingsState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub logout_button_bounds: Option<Bounds>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub my_account_bounds: Option<Bounds>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub modal_ok_bounds: Option<Bounds>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub modal_cancel_bounds: Option<Bounds>,
 }
 
 // ============================================
