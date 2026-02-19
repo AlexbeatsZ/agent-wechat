@@ -110,12 +110,7 @@ echo "Starting agent-server on port ${AGENT_PORT:-6174}..."
 # Run in a restart loop so `pkill agent-server` restarts it
 # (used by dev-deploy/dev-watch to hot-swap the binary)
 while true; do
-  if [ "${DEBUG_GDB:-}" = "1" ] && command -v gdbserver >/dev/null 2>&1; then
-    echo "Waiting for debugger on port 1234..."
-    gdbserver :1234 /opt/agent-server/agent-server &
-  else
-    /opt/agent-server/agent-server &
-  fi
+  /opt/agent-server/agent-server &
   SERVER_PID=$!
   wait $SERVER_PID
   EXIT_CODE=$?

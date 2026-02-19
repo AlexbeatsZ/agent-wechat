@@ -1,6 +1,7 @@
 export type WeChatConfig = {
   enabled?: boolean;
   serverUrl: string;
+  token?: string;
   dmPolicy?: "allowlist" | "open" | "disabled";
   allowFrom?: string[];
   groupPolicy?: "open" | "disabled" | "allowlist";
@@ -19,6 +20,7 @@ export type ResolvedWeChatAccount = {
   accountId: string;
   enabled: boolean;
   serverUrl: string;
+  token?: string;
   dmPolicy: string;
   allowFrom: string[];
   groupPolicy: string;
@@ -45,6 +47,7 @@ export function resolveWeChatAccount(
     accountId: accountId ?? DEFAULT_ACCOUNT_ID,
     enabled: wechat.enabled !== false,
     serverUrl: wechat.serverUrl,
+    token: wechat.token,
     dmPolicy: wechat.dmPolicy ?? "disabled",
     allowFrom: wechat.allowFrom ?? [],
     groupPolicy: wechat.groupPolicy ?? "disabled",

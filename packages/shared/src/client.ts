@@ -229,6 +229,12 @@ export class WeChatClient {
    * Uses the native WebSocket API (Node 22+).
    * Returns a handle with close() to tear down the connection.
    */
+  /** Extract the bearer token (if any) for use in WebSocket query params. */
+  private get wsToken(): string | undefined {
+    const auth = this.headers.Authorization;
+    return auth?.replace(/^Bearer\s+/i, "");
+  }
+
   loginSubscribe(opts: {
     timeoutMs?: number;
     newAccount?: boolean;
@@ -240,6 +246,7 @@ export class WeChatClient {
     const params = qs({
       timeoutMs: opts.timeoutMs,
       newAccount: opts.newAccount,
+      token: this.wsToken,
     });
     const ws = new WebSocket(`${wsUrl}/api/ws/login${params}`);
 

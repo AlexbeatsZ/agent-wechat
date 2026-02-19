@@ -39,6 +39,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
       properties: {
         enabled: { type: "boolean" },
         serverUrl: { type: "string" },
+        token: { type: "string" },
         dmPolicy: {
           type: "string",
           enum: ["open", "allowlist", "disabled"],
@@ -77,6 +78,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
           accountId: accountId ?? DEFAULT_ACCOUNT_ID,
           enabled: false,
           serverUrl: "",
+          token: undefined,
           dmPolicy: "disabled",
           allowFrom: [],
           groupPolicy: "disabled",
@@ -139,7 +141,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
       if (!account?.serverUrl) {
         return { channel: "wechat", ok: false, error: "No serverUrl configured" };
       }
-      const client = new WeChatClient({ baseUrl: account.serverUrl });
+      const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
       const result = await client.sendMessage({ chatId: to, text });
       return {
         channel: "wechat",
@@ -154,7 +156,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
       if (!account?.serverUrl) {
         return { channel: "wechat", ok: false, error: "No serverUrl configured" };
       }
-      const client = new WeChatClient({ baseUrl: account.serverUrl });
+      const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
       if (mediaUrl) {
         try {
           let base64: string;
@@ -237,7 +239,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
       if (!account?.serverUrl) {
         return { message: "No serverUrl configured. Run: openclaw channels setup wechat" };
       }
-      const client = new WeChatClient({ baseUrl: account.serverUrl });
+      const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
 
       try {
         const result = await loginStart(client, accountId, { timeoutMs, force });
@@ -258,7 +260,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
         accountId ?? undefined,
       );
       if (!account?.serverUrl) return { cleared: false };
-      const client = new WeChatClient({ baseUrl: account.serverUrl });
+      const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
       try {
         const result = await client.logout();
         return { cleared: result.success, loggedOut: result.success };
@@ -295,7 +297,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
         );
       }
 
-      const client = new WeChatClient({ baseUrl: account.serverUrl });
+      const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
 
       // Check if already logged in
       try {
@@ -376,6 +378,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
   setup: {
     applyAccountConfig: ({ cfg, input }: { cfg: any; accountId: string; input: any }) => {
       const serverUrl = input.url || input.httpUrl || "http://localhost:6174";
+      const token = input.token;
       return {
         ...cfg,
         channels: {
@@ -384,6 +387,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
             ...cfg.channels?.wechat,
             enabled: true,
             serverUrl,
+            ...(token ? { token } : {}),
           },
         },
       };

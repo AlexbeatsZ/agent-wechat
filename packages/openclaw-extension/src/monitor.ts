@@ -99,7 +99,7 @@ export async function startWeChatMonitor(
   opts: WeChatMonitorOptions,
 ): Promise<void> {
   const { account, abortSignal, runtime, setStatus, log } = opts;
-  const client = new WeChatClient({ baseUrl: account.serverUrl });
+  const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
 
   // Track last-seen message ID per chat
   const lastSeenId = new Map<string, number>();

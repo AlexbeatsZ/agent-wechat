@@ -250,7 +250,28 @@ The `dev:deploy` script builds the Rust binary for `aarch64-unknown-linux-gnu` (
 ## Environment Variables
 
 - `AGENT_WECHAT_URL` - Override server URL (default: http://localhost:6174)
+- `AGENT_WECHAT_TOKEN` - Override auth token (default: read from `~/.config/agent-wechat/token`)
 - `AGENT_DB_PATH` - Override SQLite DB path (default: /data/agent.db)
+
+## Security
+
+### Token Authentication
+
+All HTTP and WebSocket endpoints require a bearer token. The token is auto-generated on first container start.
+
+- **Token file**: `~/.config/agent-wechat/token` (host) → `/data/auth-token` (container, read-only mount)
+- **HTTP**: `Authorization: Bearer <token>` header
+- **WebSocket**: `?token=<token>` query param (native WebSocket doesn't support headers)
+- **Required**: Server refuses to start without a token (no token file or env var = startup error)
+- **Health**: `/health` is always accessible without auth
+- **VNC**: Bound to `127.0.0.1` (localhost-only) — use SSH tunnel for remote access
+
+| Command | Purpose |
+|---------|---------|
+| `pnpm cli auth token` | Show current token |
+| `pnpm cli auth token --regenerate` | Generate new token (requires container restart) |
+
+Environment variable `AGENT_WECHAT_TOKEN` overrides the token file on both host (CLI) and container (server) side.
 
 ## Database
 

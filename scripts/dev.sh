@@ -13,7 +13,6 @@ set -e
 CONTAINER_NAME="agent-wechat"
 DEFAULT_PORT=6174
 VNC_PORT=5900
-DEBUG_GDB=1
 
 # Determine architecture
 ARCH=$(uname -m)
@@ -30,6 +29,16 @@ MONOREPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Paths to mount
 DOCKER_TOOLS="$MONOREPO_ROOT/docker/tools"
 
+# Auto-generate auth token if needed
+TOKEN_DIR="$HOME/.config/agent-wechat"
+TOKEN_PATH="$TOKEN_DIR/token"
+if [ ! -f "$TOKEN_PATH" ]; then
+  mkdir -p "$TOKEN_DIR"
+  openssl rand -hex 32 > "$TOKEN_PATH"
+  chmod 600 "$TOKEN_PATH"
+  echo "Auth token generated: $TOKEN_PATH"
+fi
+
 # Stop any existing container
 docker stop "$CONTAINER_NAME" 2>/dev/null || true
 docker rm "$CONTAINER_NAME" 2>/dev/null || true
@@ -44,28 +53,26 @@ fi
 echo "Starting $CONTAINER_NAME in dev mode..."
 echo "  Mounting: $DOCKER_TOOLS → /opt/tools"
 
-DEBUG_ARGS=""
-if [ "$DEBUG_GDB" -eq 1 ]; then
-  DEBUG_ARGS="-e DEBUG_GDB=1 -p 1234:1234"
-  echo "  Debug: gdbserver on port 1234"
-fi
+# Always expose gdb port for on-demand attach
+echo "  Debug: gdbserver attach available on port 1234"
 
 docker run -d \
   --name "$CONTAINER_NAME" \
   --security-opt seccomp=unconfined \
   --cap-add=SYS_PTRACE \
   -p "$DEFAULT_PORT:$DEFAULT_PORT" \
-  -p "$VNC_PORT:$VNC_PORT" \
-  $DEBUG_ARGS \
+  -p "127.0.0.1:$VNC_PORT:$VNC_PORT" \
+  -p 1234:1234 \
   -v "$CONTAINER_NAME-data:/data" \
   -v "$CONTAINER_NAME-wechat-home:/home/wechat" \
   -v "$DOCKER_TOOLS:/opt/tools" \
+  -v "$TOKEN_PATH:/data/auth-token:ro" \
   "$IMAGE"
 
 echo ""
 echo "Dev container started!"
 echo "  API: http://localhost:$DEFAULT_PORT"
-echo "  VNC: localhost:$VNC_PORT"
+echo "  VNC: localhost:$VNC_PORT (localhost-only)"
 echo ""
 echo "Waiting for server..."
 

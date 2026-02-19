@@ -4,6 +4,7 @@ import { Command, Option } from "commander";
 import { WeChatClient, type WeChatClientOptions } from "@thisnick/agent-wechat-shared";
 import { createSubscriptionClient, type SubscriptionClientOptions } from "./lib/client.js";
 import { spawn, execSync } from "child_process";
+import { randomBytes } from "crypto";
 import fs from "fs";
 import qrTerminal from "qrcode-terminal";
 import os from "os";
@@ -19,6 +20,33 @@ const VNC_PORT = 5900;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MONOREPO_ROOT = path.resolve(__dirname, "../../..");
 
+// Auth token paths
+const TOKEN_DIR = path.join(os.homedir(), ".config", "agent-wechat");
+const TOKEN_PATH = path.join(TOKEN_DIR, "token");
+
+function ensureToken(): string {
+  try {
+    const existing = fs.readFileSync(TOKEN_PATH, "utf-8").trim();
+    if (existing) return existing;
+  } catch {
+    // File doesn't exist, generate one
+  }
+  fs.mkdirSync(TOKEN_DIR, { recursive: true });
+  const token = randomBytes(32).toString("hex");
+  fs.writeFileSync(TOKEN_PATH, token + "\n", { mode: 0o600 });
+  console.log(`Auth token generated: ${TOKEN_PATH}`);
+  return token;
+}
+
+function readToken(): string | undefined {
+  try {
+    const t = fs.readFileSync(TOKEN_PATH, "utf-8").trim();
+    return t || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 interface Config {
   serverUrl: string;
   token?: string;
@@ -27,7 +55,7 @@ interface Config {
 function getConfig(): Config {
   return {
     serverUrl: process.env.AGENT_WECHAT_URL || `http://localhost:${DEFAULT_PORT}`,
-    token: process.env.AGENT_WECHAT_TOKEN,
+    token: process.env.AGENT_WECHAT_TOKEN || readToken(),
   };
 }
 
@@ -182,6 +210,27 @@ authCmd
       console.log(`Logged in${loggedInUser ? ` as ${loggedInUser}` : ""}`);
     } else {
       console.log("Not logged in");
+    }
+  });
+
+authCmd
+  .command("token")
+  .description("Show or regenerate the auth token")
+  .option("--regenerate", "Generate a new token")
+  .action(async (opts: { regenerate?: boolean }) => {
+    if (opts.regenerate) {
+      fs.mkdirSync(TOKEN_DIR, { recursive: true });
+      const token = randomBytes(32).toString("hex");
+      fs.writeFileSync(TOKEN_PATH, token + "\n", { mode: 0o600 });
+      console.log(`New token: ${token}`);
+      console.log(`Restart the container for it to take effect: pnpm cli down && pnpm cli up`);
+    } else {
+      const token = readToken();
+      if (token) {
+        console.log(token);
+      } else {
+        console.log("No token found. Run 'pnpm cli up' to auto-generate one.");
+      }
     }
   });
 
@@ -748,6 +797,9 @@ async function cmdUp() {
     process.exit(1);
   }
 
+  // Ensure auth token exists
+  const token = ensureToken();
+
   console.log(`Starting container ${CONTAINER_NAME} from ${image}...`);
 
   const dockerArgs = [
@@ -756,9 +808,10 @@ async function cmdUp() {
     "--security-opt", "seccomp=unconfined",
     "--cap-add=SYS_PTRACE",
     "-p", `${DEFAULT_PORT}:${DEFAULT_PORT}`,
-    "-p", `${VNC_PORT}:${VNC_PORT}`,
+    "-p", `127.0.0.1:${VNC_PORT}:${VNC_PORT}`,
     "-v", `${CONTAINER_NAME}-data:/data`,
     "-v", `${CONTAINER_NAME}-wechat-home:/home/wechat`,
+    "-v", `${TOKEN_PATH}:/data/auth-token:ro`,
     image,
   ];
 

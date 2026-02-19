@@ -34,6 +34,10 @@ async fn main() {
         std::env::var("DBUS_SESSION_BUS_ADDRESS").ok()
     );
 
+    // Initialize auth token (panics if no token found)
+    router::auth::init_token();
+    tracing::info!("Auth token loaded");
+
     // Initialize database
     tracing::info!("Initializing database...");
     db::init_db().expect("Failed to initialize database");

@@ -1,3 +1,4 @@
+pub mod auth;
 mod chats;
 mod debug;
 mod events;
@@ -9,9 +10,13 @@ use axum::{
     extract::DefaultBodyLimit,
     http::Method,
     routing::{get, post},
-    Router,
+    Json, Router,
 };
 use tower_http::cors::{Any, CorsLayer};
+
+async fn health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status": "ok"}))
+}
 
 /// Build the full axum Router.
 pub fn build_router() -> Router {
@@ -21,6 +26,8 @@ pub fn build_router() -> Router {
         .allow_headers(Any);
 
     Router::new()
+        // Health (exempt from auth via middleware check)
+        .route("/health", get(health))
         // Status
         .route("/api/status", get(status::get_status))
         .route("/api/status/auth", get(status::auth_status))
@@ -50,6 +57,8 @@ pub fn build_router() -> Router {
         .route("/api/ws/login", get(status::login_ws))
         // Events WebSocket
         .route("/api/ws/events", get(events::events_ws))
+        // Middleware: auth → body limit → CORS (applied bottom-up)
+        .layer(axum::middleware::from_fn(auth::auth_middleware))
         .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50 MB for media uploads
         .layer(cors)
 }

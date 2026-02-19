@@ -35,7 +35,7 @@ export const wechatOnboardingAdapter = {
       };
     }
 
-    const client = new WeChatClient({ baseUrl: account.serverUrl });
+    const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
     const lines: string[] = [];
 
     try {
@@ -91,8 +91,18 @@ export const wechatOnboardingAdapter = {
     });
     setCfg("channels.wechat.serverUrl", serverUrl);
 
+    // 1b. Auth token
+    const existingToken = (cfg as any)?.channels?.wechat?.token ?? "";
+    const token = await prompter.text({
+      message: "Auth token (from ~/.config/agent-wechat/token on the server host)",
+      default: existingToken,
+    });
+    if (token) {
+      setCfg("channels.wechat.token", token);
+    }
+
     // 2. Test connection
-    const client = new WeChatClient({ baseUrl: serverUrl });
+    const client = new WeChatClient({ baseUrl: serverUrl, token: token || undefined });
     try {
       await client.status();
     } catch {
