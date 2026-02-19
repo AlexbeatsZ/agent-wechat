@@ -1,6 +1,6 @@
 use crate::ia::types::MediaResult;
 use crate::tools::wechat_db::{get_db_path, query_wechat_db};
-use crate::tools::wechat_messages::{decode_message_content, find_message_db, get_msg_table_name};
+use crate::tools::wechat_messages::{decode_message_content, extract_xml_tag, find_message_db, get_msg_table_name};
 use md5::{Digest, Md5};
 use std::collections::HashMap;
 use std::fs;
@@ -38,7 +38,7 @@ fn lookup_message_raw(
     keys: &HashMap<String, String>,
     chat_id: &str,
     local_id: i64,
-) -> Option<(i32, i64, String)> {
+) -> Option<(i64, i64, String)> {
     let table_name = get_msg_table_name(chat_id);
     let (db_name, key) = find_message_db(account_dir, keys, chat_id)?;
     let db_path = get_db_path(account_dir, &db_name);
@@ -57,7 +57,7 @@ fn lookup_message_raw(
     );
 
     let row = rows.first()?;
-    let local_type = row.get("local_type")?.as_i64()? as i32;
+    let local_type = row.get("local_type")?.as_i64()?;
     let create_time = row.get("create_time").and_then(|v| v.as_i64()).unwrap_or(0);
     let hex_content = row
         .get("hex_content")
@@ -652,6 +652,52 @@ fn get_voice_data(
     unsupported()
 }
 
+// ── File attachment ──────────────────────────────────────────────────────────
+
+fn get_file_attachment(
+    account_dir: &str,
+    content: &str,
+    create_time: i64,
+    local_id: i64,
+) -> MediaResult {
+    let filename = extract_xml_tag(content, "title").unwrap_or_else(|| format!("file_{local_id}"));
+    let ext = extract_xml_tag(content, "fileext").unwrap_or_default();
+
+    // Files are stored at <account>/msg/file/YYYY-MM/<filename>
+    let dt = chrono::DateTime::from_timestamp(create_time, 0);
+    let year_month = dt.map(|d| d.format("%Y-%m").to_string()).unwrap_or_default();
+
+    for base in &account_base_paths(account_dir) {
+        let file_path = Path::new(base)
+            .join("msg/file")
+            .join(&year_month)
+            .join(&filename);
+        if file_path.exists() {
+            if let Ok(data) = fs::read(&file_path) {
+                return MediaResult {
+                    media_type: "file".into(),
+                    data: Some(base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &data,
+                    )),
+                    url: None,
+                    format: ext,
+                    filename,
+                };
+            }
+        }
+    }
+
+    // File not yet downloaded by WeChat
+    MediaResult {
+        media_type: "file".into(),
+        data: None,
+        url: None,
+        format: ext,
+        filename,
+    }
+}
+
 // ── Public entry point ───────────────────────────────────────────────────────
 
 /// Get media attachment for a message.
@@ -674,9 +720,14 @@ pub fn get_message_media(
             }
         };
 
-    let base = local_type & 0x7FFFFFFF;
+    let base = (local_type & 0xFFFFFFFF) as i32;
+    let sub = (local_type >> 32) as i32;
 
     match base {
+        49 if sub == 6 => {
+            // File attachment (appmsg subtype 6)
+            return get_file_attachment(account_dir, &content, create_time, local_id);
+        }
         3 => {
             // Image
             // Try cached thumbnail first

@@ -159,31 +159,44 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
       const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
       if (mediaUrl) {
         try {
+          const fsmod = await import("fs/promises");
+          const pathmod = await import("path");
+
           let base64: string;
           let mimeType: string;
+          let filename: string;
           if (mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")) {
             const res = await fetch(mediaUrl);
             const buffer = await res.arrayBuffer();
             base64 = Buffer.from(buffer).toString("base64");
-            mimeType = res.headers.get("content-type") ?? "image/png";
+            mimeType = res.headers.get("content-type") ?? "application/octet-stream";
+            // Extract filename from URL path
+            const urlPath = new URL(mediaUrl).pathname;
+            filename = pathmod.basename(urlPath) || "file";
           } else {
-            // Local file path
-            const fs = await import("fs/promises");
-            const path = await import("path");
-            const buf = await fs.readFile(mediaUrl);
+            const buf = await fsmod.readFile(mediaUrl);
             base64 = buf.toString("base64");
-            const ext = path.extname(mediaUrl).toLowerCase().replace(".", "");
+            filename = pathmod.basename(mediaUrl);
+            const ext = pathmod.extname(mediaUrl).toLowerCase().replace(".", "");
             const extMime: Record<string, string> = {
               png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
               gif: "image/gif", webp: "image/webp",
             };
-            mimeType = extMime[ext] ?? "image/png";
+            mimeType = extMime[ext] ?? "application/octet-stream";
           }
-          const result = await client.sendMessage({
-            chatId: to,
-            text: text || undefined,
-            image: { data: base64, mimeType },
-          });
+
+          const isImage = mimeType.startsWith("image/");
+          const result = isImage
+            ? await client.sendMessage({
+                chatId: to,
+                text: text || undefined,
+                image: { data: base64, mimeType },
+              })
+            : await client.sendMessage({
+                chatId: to,
+                text: text || undefined,
+                file: { data: base64, filename },
+              });
           return {
             channel: "wechat",
             ok: result.success,

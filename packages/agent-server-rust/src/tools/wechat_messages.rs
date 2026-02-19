@@ -150,7 +150,7 @@ fn extract_xml_attr(xml: &str, attr: &str) -> Option<String> {
 
 /// Extract text between XML tags: <tag>text</tag>
 /// Also handles CDATA: <tag><![CDATA[text]]></tag>
-fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
+pub(crate) fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let start = xml.find(&open)? + open.len();
