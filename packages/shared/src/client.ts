@@ -265,8 +265,8 @@ export class WeChatClient {
 
     ws.addEventListener("error", (event) => {
       const msg =
-        event instanceof ErrorEvent
-          ? event.message
+        "message" in event && typeof (event as any).message === "string"
+          ? (event as any).message
           : "WebSocket error";
       opts.onError?.(new Error(msg));
     });
