@@ -225,12 +225,8 @@ authCmd
       console.log(`New token: ${token}`);
       console.log(`Restart the container for it to take effect: pnpm cli down && pnpm cli up`);
     } else {
-      const token = readToken();
-      if (token) {
-        console.log(token);
-      } else {
-        console.log("No token found. Run 'pnpm cli up' to auto-generate one.");
-      }
+      const token = ensureToken();
+      console.log(token);
     }
   });
 

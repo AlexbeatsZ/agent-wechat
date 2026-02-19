@@ -1,6 +1,26 @@
+import { randomBytes } from "crypto";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { WeChatClient } from "@thisnick/agent-wechat-shared";
 import type { ResolvedWeChatAccount } from "./types.js";
 import { loginTerminal } from "./login.js";
+
+const TOKEN_DIR = path.join(os.homedir(), ".config", "agent-wechat");
+const TOKEN_PATH = path.join(TOKEN_DIR, "token");
+
+function readOrGenerateToken(): string {
+  try {
+    const t = fs.readFileSync(TOKEN_PATH, "utf-8").trim();
+    if (t) return t;
+  } catch {
+    // not found
+  }
+  fs.mkdirSync(TOKEN_DIR, { recursive: true });
+  const token = randomBytes(32).toString("hex");
+  fs.writeFileSync(TOKEN_PATH, token + "\n", { mode: 0o600 });
+  return token;
+}
 
 export interface OnboardingStatus {
   configured: boolean;
@@ -91,15 +111,14 @@ export const wechatOnboardingAdapter = {
     });
     setCfg("channels.wechat.serverUrl", serverUrl);
 
-    // 1b. Auth token
+    // 1b. Auth token — read from file/generate if empty
     const existingToken = (cfg as any)?.channels?.wechat?.token ?? "";
+    const localDefault = existingToken || readOrGenerateToken();
     const token = await prompter.text({
-      message: "Auth token (from ~/.config/agent-wechat/token on the server host)",
-      default: existingToken,
+      message: "Auth token (leave empty to use local token)",
+      default: localDefault,
     });
-    if (token) {
-      setCfg("channels.wechat.token", token);
-    }
+    setCfg("channels.wechat.token", token || localDefault);
 
     // 2. Test connection
     const client = new WeChatClient({ baseUrl: serverUrl, token: token || undefined });
