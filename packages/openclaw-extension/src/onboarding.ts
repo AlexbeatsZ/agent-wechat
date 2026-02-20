@@ -2,7 +2,7 @@ import { randomBytes } from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { WeChatClient } from "@thisnick/agent-wechat-shared";
+import { WeChatClient } from "@agent-wechat/shared";
 import type { ResolvedWeChatAccount } from "./types.js";
 import { loginTerminal } from "./login.js";
 

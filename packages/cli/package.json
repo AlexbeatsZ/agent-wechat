@@ -1,27 +1,33 @@
 {
-  "name": "@thisnick/agent-wechat-cli",
+  "name": "@agent-wechat/cli",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "bin": {
     "wx": "./dist/cli.js"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "files": ["dist"],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "start": "node dist/cli.js",
+    "build": "esbuild src/cli.ts --bundle --format=esm --platform=node --outfile=dist/cli.js --banner:js='#!/usr/bin/env node\nimport{createRequire}from\"module\";const require=createRequire(import.meta.url);' --external:qrcode-terminal",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@thisnick/agent-wechat-shared": "workspace:*",
-    "commander": "^14.0.3",
     "qrcode-terminal": "^0.12.0"
   },
   "devDependencies": {
+    "@agent-wechat/shared": "workspace:*",
+    "commander": "^14.0.3",
+    "esbuild": "^0.25.0",
     "@types/node": "^22",
     "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^5.4.5"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thisnick/agent-wechat.git",
+    "directory": "packages/cli"
   }
 }

@@ -1,7 +1,5 @@
-#!/usr/bin/env node
-
 import { Command, Option } from "commander";
-import { WeChatClient, type WeChatClientOptions } from "@thisnick/agent-wechat-shared";
+import { WeChatClient, type WeChatClientOptions } from "@agent-wechat/shared";
 import { createSubscriptionClient, type SubscriptionClientOptions } from "./lib/client.js";
 import { spawn, execSync } from "child_process";
 import { randomBytes } from "crypto";

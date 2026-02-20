@@ -1,5 +1,5 @@
-import { WeChatClient } from "@thisnick/agent-wechat-shared";
-import type { LoginSubscriptionEvent } from "@thisnick/agent-wechat-shared";
+import { WeChatClient } from "@agent-wechat/shared";
+import type { LoginSubscriptionEvent } from "@agent-wechat/shared";
 
 type ActiveLogin = {
   accountId: string;

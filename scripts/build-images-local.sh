@@ -4,13 +4,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DOCKER_DIR="$ROOT_DIR/docker"
 DOCKERFILE="$DOCKER_DIR/Dockerfile"
-CACHE_DIR="$DOCKER_DIR/cache"
-DEB_PATH="$DOCKER_DIR/wechat.deb"
 
-AMD64_URL="https://dldir1v6.qq.com/weixin/Universal/Linux/WeChatLinux_x86_64.deb"
-ARM64_URL="https://dldir1v6.qq.com/weixin/Universal/Linux/WeChatLinux_arm64.deb"
-
-FORCE=0
 ARCH_ONLY=""
 NO_CACHE=0
 BUILD_MODE="release"
@@ -18,10 +12,6 @@ BUILD_MODE="release"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --)
-      shift
-      ;;
-    --force)
-      FORCE=1
       shift
       ;;
     --no-cache)
@@ -43,50 +33,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-download_file() {
-  local url="$1"
-  local cache_path="$2"
-  local temp_path="${cache_path}.partial"
-
-  if [ "$FORCE" -eq 1 ]; then
-    echo "==> Forcing download of $(basename "$cache_path")"
-  fi
-
-  echo "==> Downloading $(basename "$cache_path")"
-  mkdir -p "$CACHE_DIR"
-  rm -f "$temp_path"
-  if command -v curl >/dev/null 2>&1; then
-    curl -L "$url" -o "$temp_path"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -O "$temp_path" "$url"
-  else
-    echo "curl or wget is required" >&2
-    exit 1
-  fi
-  mv "$temp_path" "$cache_path"
-}
-
-ensure_download() {
-  local url="$1"
-  local cache_path="$2"
-
-  if [ -f "$cache_path" ] && [ "$FORCE" -eq 0 ]; then
-    local size
-    size=$(wc -c < "$cache_path" | tr -d ' ')
-    if [ "${size}" -gt 10485760 ]; then
-      echo "==> Using cached $(basename "$cache_path") (${size} bytes)"
-      return
-    fi
-    echo "==> Cached file too small (${size} bytes), re-downloading"
-  fi
-
-  download_file "$url" "$cache_path"
-}
-
 prepare_build_context() {
   echo "==> Preparing build context"
-
-  # Copy Rust agent-server source to docker context
   echo "==> Copying agent-server-rust to docker context"
   rm -rf "$DOCKER_DIR/agent-server-rust"
   mkdir -p "$DOCKER_DIR/agent-server-rust"
@@ -104,21 +52,11 @@ cleanup_build_context() {
 }
 
 build_arch() {
-  local arch="${1:-}"
-  local url="${2:-}"
-  local platform="${3:-}"
-  local tag="${4:-}"
-  local cache_path="${5:-}"
-
-  if [ -z "$arch" ] || [ -z "$url" ] || [ -z "$platform" ] || [ -z "$tag" ] || [ -z "$cache_path" ]; then
-    echo "build_arch missing args" >&2
-    exit 1
-  fi
-
-  ensure_download "$url" "$cache_path"
+  local platform="$1"
+  local tag="$2"
 
   echo "==> Building ${tag} (${platform})"
-  cp "$cache_path" "$DEB_PATH"
+  echo "    WeChat .deb will be downloaded inside Docker build"
   docker buildx build \
     ${NO_CACHE:+--no-cache} \
     --platform "$platform" \
@@ -150,16 +88,16 @@ trap cleanup_build_context EXIT
 
 case "$ARCH_ONLY" in
   amd64)
-    build_arch "amd64" "$AMD64_URL" "linux/amd64" "agent-wechat:amd64" "$CACHE_DIR/wechat.amd64.deb"
+    build_arch "linux/amd64" "agent-wechat:amd64"
     printf "\nDone. Built: agent-wechat:amd64\n"
     ;;
   arm64)
-    build_arch "arm64" "$ARM64_URL" "linux/arm64" "agent-wechat:arm64" "$CACHE_DIR/wechat.arm64.deb"
+    build_arch "linux/arm64" "agent-wechat:arm64"
     printf "\nDone. Built: agent-wechat:arm64\n"
     ;;
   both)
-    build_arch "amd64" "$AMD64_URL" "linux/amd64" "agent-wechat:amd64" "$CACHE_DIR/wechat.amd64.deb"
-    build_arch "arm64" "$ARM64_URL" "linux/arm64" "agent-wechat:arm64" "$CACHE_DIR/wechat.arm64.deb"
+    build_arch "linux/amd64" "agent-wechat:amd64"
+    build_arch "linux/arm64" "agent-wechat:arm64"
     printf "\nDone. Built: agent-wechat:amd64, agent-wechat:arm64\n"
     ;;
   *)

@@ -1,5 +1,5 @@
-import { WeChatClient } from "@thisnick/agent-wechat-shared";
-import type { Chat, Message, MediaResult } from "@thisnick/agent-wechat-shared";
+import { WeChatClient } from "@agent-wechat/shared";
+import type { Chat, Message, MediaResult } from "@agent-wechat/shared";
 import { createReplyPrefixOptions } from "openclaw/plugin-sdk";
 import type { ResolvedWeChatAccount } from "./types.js";
 import { getWeChatRuntime } from "./runtime.js";

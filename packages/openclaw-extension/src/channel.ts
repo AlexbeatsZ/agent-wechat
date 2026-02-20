@@ -5,7 +5,7 @@ import { resolveWeChatAccount } from "./types.js";
 import { startWeChatMonitor } from "./monitor.js";
 import { wechatOnboardingAdapter } from "./onboarding.js";
 import { collectWeChatStatusIssues } from "./status.js";
-import { WeChatClient } from "@thisnick/agent-wechat-shared";
+import { WeChatClient } from "@agent-wechat/shared";
 import { loginStart, loginWait, loginTerminal } from "./login.js";
 // loginWait still used by gateway.loginWithQrWait
 import { createWeChatLoginTool } from "./agent-tools.js";

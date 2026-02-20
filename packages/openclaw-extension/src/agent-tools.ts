@@ -1,5 +1,5 @@
 import type { ResolvedWeChatAccount } from "./types.js";
-import { WeChatClient } from "@thisnick/agent-wechat-shared";
+import { WeChatClient } from "@agent-wechat/shared";
 import { loginStart, getActiveLoginState } from "./login.js";
 
 export function createWeChatLoginTool(account: ResolvedWeChatAccount) {
