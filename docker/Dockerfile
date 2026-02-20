@@ -93,8 +93,10 @@ RUN mkdir -p /tmp/.X11-unix && chown root:root /tmp/.X11-unix && chmod 1777 /tmp
 # ============================================
 # WeChat
 # ============================================
-COPY wechat.deb /tmp/wechat.deb
-RUN dpkg -i /tmp/wechat.deb || (apt-get update && apt-get install -y -f) \
+ARG TARGETARCH
+RUN ARCH_SUFFIX=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x86_64") \
+    && curl -L -o /tmp/wechat.deb "https://dldir1v6.qq.com/weixin/Universal/Linux/WeChatLinux_${ARCH_SUFFIX}.deb" \
+    && (dpkg -i /tmp/wechat.deb || (apt-get update && apt-get install -y -f)) \
     && rm -rf /var/lib/apt/lists/* /tmp/wechat.deb
 
 RUN useradd -m -s /bin/bash wechat

@@ -1,14 +1,13 @@
 {
-  "name": "@agent-wechat/openclaw-wechat",
+  "name": "@agent-wechat/wechat",
   "version": "0.1.0",
   "type": "module",
+  "files": ["dist", "openclaw.plugin.json"],
   "scripts": {
     "build": "esbuild index.ts --bundle --format=esm --platform=node --outfile=dist/index.js --external:openclaw"
   },
-  "dependencies": {
-    "@thisnick/agent-wechat-shared": "workspace:*"
-  },
   "devDependencies": {
+    "@agent-wechat/shared": "workspace:*",
     "esbuild": "^0.25.0"
   },
   "openclaw": {
@@ -21,8 +20,16 @@
       "order": 80
     },
     "install": {
-      "npmSpec": "@agent-wechat/openclaw",
-      "localPath": "packages/openclaw-extension"
+      "npmSpec": "@agent-wechat/wechat"
     }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thisnick/agent-wechat.git",
+    "directory": "packages/openclaw-extension"
   }
 }
