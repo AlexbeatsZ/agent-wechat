@@ -1,37 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ARCH=${1:-""}
-TARGET_DIR=${2:-"docker"}
+# Download the WeChat .deb for the local architecture into docker/wechat.deb.
+# This speeds up local Docker builds — the Dockerfile uses it if present.
 
-if [ -z "$ARCH" ]; then
-  ARCH=$(uname -m)
-fi
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+OUT="$ROOT_DIR/docker/wechat.deb"
 
-URL=""
-case "$ARCH" in
-  x86_64|amd64)
-    URL="https://dldir1v6.qq.com/weixin/Universal/Linux/WeChatLinux_x86_64.deb"
-    ;;
-  aarch64|arm64)
-    URL="https://dldir1v6.qq.com/weixin/Universal/Linux/WeChatLinux_arm64.deb"
-    ;;
+case "$(uname -m)" in
+  x86_64)        ARCH_SUFFIX="x86_64" ;;
+  aarch64|arm64) ARCH_SUFFIX="arm64" ;;
   *)
-    echo "unsupported architecture: $ARCH" >&2
+    echo "Unknown architecture: $(uname -m)" >&2
     exit 1
     ;;
- esac
+esac
 
-mkdir -p "$TARGET_DIR"
-OUT_PATH="$TARGET_DIR/wechat.deb"
+URL="https://dldir1v6.qq.com/weixin/Universal/Linux/WeChatLinux_${ARCH_SUFFIX}.deb"
 
-if command -v curl >/dev/null 2>&1; then
-  curl -L "$URL" -o "$OUT_PATH"
-elif command -v wget >/dev/null 2>&1; then
-  wget -O "$OUT_PATH" "$URL"
-else
-  echo "curl or wget is required" >&2
-  exit 1
+if [ -f "$OUT" ]; then
+  echo "wechat.deb already exists. Delete docker/wechat.deb to re-download."
+  ls -lh "$OUT"
+  exit 0
 fi
 
-echo "Downloaded $URL to $OUT_PATH"
+echo "Downloading WeChat for ${ARCH_SUFFIX}..."
+curl -L -o "$OUT" "$URL"
+echo "Saved to docker/wechat.deb ($(du -h "$OUT" | cut -f1))"
