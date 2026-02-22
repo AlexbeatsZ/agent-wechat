@@ -1,82 +1,132 @@
 # agent-wechat
 
-WeChat automation via deterministic FSM. Runs WeChat in a Docker container with UI automation.
+A programmable WeChat interface. Runs WeChat Linux in a Docker container with a REST API for reading chats, messages, and media, sending messages, and managing login — all via deterministic FSM-based UI automation.
+
+## Packages
+
+| Package | npm | Description |
+|---------|-----|-------------|
+| [`@agent-wechat/cli`](./packages/cli) | [![npm](https://img.shields.io/npm/v/@agent-wechat/cli)](https://www.npmjs.com/package/@agent-wechat/cli) | CLI for managing the Docker container and interacting with WeChat |
+| [`@agent-wechat/wechat`](./packages/openclaw-extension) | [![npm](https://img.shields.io/npm/v/@agent-wechat/wechat)](https://www.npmjs.com/package/@agent-wechat/wechat) | [OpenClaw](https://openclaw.com) extension for AI agent integration |
+
+## What It Does
+
+- **Read** chats, messages, and media (images, voice, files) via REST API
+- **Send** text messages, images, and files
+- **Login** via QR code displayed in your terminal
+- **Monitor** for new messages in real-time
+
+All data is read directly from WeChat's local databases — no screen scraping for chat data.
 
 ## Requirements
 
-- Docker (via Colima on macOS, or Docker Desktop)
+- Docker (Colima on macOS, or Docker Desktop)
 - Node.js >= 22 (for CLI)
-- pnpm
+- pnpm (for development)
+- **Not compatible with serverless environments** — requires ptrace capabilities
 
 ## Quick Start
 
 ```bash
-# Install dependencies
-pnpm install
+# Install the CLI
+npm install -g @agent-wechat/cli
 
-# Build CLI + shared types
-pnpm build
+# Start the container (auto-pulls Docker image)
+wx up
 
-# Build Docker image (choose your arch)
-pnpm build:image:arm64   # Apple Silicon
-pnpm build:image:amd64   # Intel
+# Login (displays QR code in terminal)
+wx auth login
 
-# Start container
-pnpm cli up
+# List your chats
+wx chats list
 
-# Connect VNC to see WeChat UI (optional)
-# Open VNC viewer → localhost:5900
+# Send a message
+wx messages send <chatId> --text "Hello"
 
-# Check status
-pnpm cli status
+# Read messages
+wx messages list <chatId>
 
-# Login (shows QR code in terminal)
-pnpm cli auth login
-
-# List chats
-pnpm cli chats list
-
-# Stop container
-pnpm cli down
+# Stop the container
+wx down
 ```
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `pnpm cli up` | Start the WeChat container |
-| `pnpm cli down` | Stop and remove container |
-| `pnpm cli logs` | Stream container logs |
-| `pnpm cli status` | Show server and login status |
-| `pnpm cli auth login` | Login flow (shows QR code) |
-| `pnpm cli chats list` | List chats |
-| `pnpm cli find <name>` | Find chat by name |
-| `pnpm cli messages list <id>` | List messages |
-| `pnpm cli messages send <id> --text <msg>` | Send message to chat |
-| `pnpm cli messages media <id> <localId>` | Download media attachment |
+| `wx up` | Start the WeChat container (auto-pulls image) |
+| `wx down` | Stop and remove container |
+| `wx logs` | Stream container logs |
+| `wx status` | Show server and login status |
+| `wx auth login` | Login flow (shows QR code) |
+| `wx chats list` | List chats |
+| `wx find <name>` | Find chat by name |
+| `wx messages list <id>` | List messages in a chat |
+| `wx messages send <id> --text <msg>` | Send text message |
+| `wx messages send <id> --image <file>` | Send image |
+| `wx messages media <id> <localId>` | Download media attachment |
 
 ## Architecture
 
-- **Container**: WeChat + Xvfb + agent-server (Rust/Axum)
-- **FSM Engine**: Deterministic state machine for UI automation
-- **CLI**: HTTP/WebSocket client that talks to agent-server
+```
+┌─────────────────────────────────────────────────────┐
+│                Docker Container                      │
+│                                                      │
+│   WeChat Linux  ←──  Xvfb + AT-SPI (accessibility)  │
+│        ↕                                             │
+│   agent-server (Rust/Axum, port 6174)                │
+│     - FSM engine for UI automation                   │
+│     - Direct WeChat DB reads for chat data           │
+│     - REST + WebSocket API                           │
+└──────────────────────┬───────────────────────────────┘
+                       │ HTTP / WebSocket
+                       ↓
+               CLI or AI agent
+```
 
-See [CLAUDE.md](./CLAUDE.md) for technical details.
+- **UI automation**: Login, open chats, send messages — all via deterministic FSM (no LLM needed)
+- **Data access**: Chats, messages, media read directly from WeChat's local SQLite databases
+- **API**: REST endpoints for all operations, WebSocket for login flow and events
+
+## Docker Setup
+
+**Option A: Via CLI** (recommended)
+
+```bash
+wx up    # auto-pulls ghcr.io/thisnick/agent-wechat
+```
+
+**Option B: Docker Compose** (for custom networking)
+
+```yaml
+services:
+  agent-wechat:
+    image: ghcr.io/thisnick/agent-wechat:latest
+    cap_add: [SYS_PTRACE]
+    ports:
+      - "6174:6174"
+      - "5900:5900"
+    volumes:
+      - agent-wechat-data:/data
+volumes:
+  agent-wechat-data:
+```
 
 ## Development
 
 ```bash
-# Build CLI + shared types
-pnpm build
-
-# Deploy Rust server changes to running container
-pnpm dev:deploy
-
-# Type check Rust code
-cd packages/agent-server-rust && cargo check
+pnpm install
+pnpm build                   # Build CLI + shared types
+pnpm dev:deploy              # Cross-compile Rust server + deploy to running container
+pnpm build:image:arm64       # Build Docker image (Apple Silicon)
+pnpm build:image:amd64       # Build Docker image (Intel)
 ```
+
+See [CLAUDE.md](./CLAUDE.md) for full technical documentation.
 
 ## Ports
 
-- `6174` - Agent server API
-- `5900` - VNC (view WeChat UI)
+| Port | Service |
+|------|---------|
+| 6174 | Agent server REST API |
+| 5900 | VNC (view WeChat UI) |

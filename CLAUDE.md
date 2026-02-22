@@ -354,25 +354,41 @@ All paths relative to `packages/agent-server-rust/`.
 - `session.db` → `SessionTable` — active chats, sort order, unread counts, last message preview
 - `contact.db` → `contact` — display names, remarks, aliases, avatars
 - `message_N.db` → `Msg_{MD5(chatId)}` — per-chat message tables (may span multiple DBs)
+- `message_resource.db` → `MessageResourceInfo`, `ChatName2Id` — image file hash lookup (primary)
 - `media_N.db` → `VoiceInfo` — voice message data
-- `hardlink.db` → `image_hardlink_info_v4`, `dir2id` — image file path resolution
+- `hardlink.db` → `image_hardlink_info_v4`, `dir2id` — image file path resolution (fallback)
 - `emoticon.db` → `kNonStoreEmoticonTable` — emoji CDN URLs
 
 ### Message Table Sharding
 
 WeChat uses per-chat message tables named `Msg_{MD5(chatId)}`. Messages may be spread across `message_0.db`, `message_1.db`, etc. The code scans all message DBs to find which one contains a given chat's table.
 
+### Image File Lookup
+
+Image `.dat` files are stored at `msg/attach/<md5(chatId)>/<YYYY-MM>/Img/<fileHash>.dat`. The `fileHash` in the filename is NOT the same as the `md5` attribute in the message XML — it's a separate hash assigned by WeChat.
+
+**Lookup order** (in `get_message_media`):
+
+1. **Thumbnail cache** — `cache/<YYYY-MM>/Message/<md5(chatId)>/Thumb/{localId}_{createTime}_thumb.jpg`
+2. **`message_resource.db`** (primary) — `MessageResourceInfo.packed_info` contains the `fileHash` as a protobuf-encoded blob. Query by `ChatName2Id.rowid` + `message_local_id`. Available immediately when image is received.
+3. **`hardlink.db`** (fallback) — `image_hardlink_info_v4` maps XML `md5` → `file_name` + directory IDs. Has an indexing delay — may not be populated until the user views the image in the WeChat UI.
+
 ### Image Processing
 
 Image `.dat` files use a two-layer encoding: AES-128-ECB for the header and single-byte XOR for the tail. The XOR byte is derived from known file format trailers (JPEG `FFD9`, PNG `IEND`). Some full-size images are in WeChat's proprietary `wxgf` format — thumbnails (`_t.dat`) are always JPEG.
+
+**File variants** in the Img directory:
+- `<hash>.dat` — mid-resolution image
+- `<hash>_t.dat` — thumbnail
+- `<hash>_h.dat` — high-resolution (full-size) image
 
 ### Gotchas
 
 - `pgrep -f /usr/bin/wechat` returns multiple PIDs (wrapper + real process) — pick the one with most open fds
 - Stored `wechatPid` goes stale after container rebuild — always fall back to `find_wechat_pid()`
 - Python extract-keys script exits non-zero if any DB key not found — catch error, read JSON output file anyway (partial success)
+- hardlink.db has indexing delay — use `message_resource.db` as primary lookup for image files
 - hardlink.db `dir2id` stores md5(chatId) not raw chatId
-- hardlink.db `modify_time` does NOT correlate with message `create_time` — images downloaded async. Use md5 from message XML for lookups
 
 ## Current Status
 
