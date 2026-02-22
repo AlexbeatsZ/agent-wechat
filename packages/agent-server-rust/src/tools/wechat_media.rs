@@ -358,8 +358,20 @@ fn find_dat_via_hardlink(
     _chat_id: &str,
     content: &str,
 ) -> Option<String> {
-    let hardlink_key = keys.get("hardlink.db")?;
-    let image_md5 = xml_attr(content, "md5")?;
+    let hardlink_key = match keys.get("hardlink.db") {
+        Some(k) => k,
+        None => {
+            tracing::warn!("[media:hardlink] no key for hardlink.db");
+            return None;
+        }
+    };
+    let image_md5 = match xml_attr(content, "md5") {
+        Some(m) => m,
+        None => {
+            tracing::warn!("[media:hardlink] no md5 attr in content (len={})", content.len());
+            return None;
+        }
+    };
     let hardlink_db = get_db_path(account_dir, "hardlink.db");
 
     let file_rows = query_wechat_db(
@@ -370,7 +382,13 @@ fn find_dat_via_hardlink(
              WHERE md5 = '{image_md5}' LIMIT 2;"
         ),
     );
-    let row = file_rows.first()?;
+    let row = match file_rows.first() {
+        Some(r) => r,
+        None => {
+            tracing::warn!("[media:hardlink] no hardlink row for md5={}", image_md5);
+            return None;
+        }
+    };
     let file_name = row.get("file_name")?.as_str()?;
     let dir1 = row.get("dir1")?.as_i64()?;
     let dir2 = row.get("dir2")?.as_i64()?;
@@ -401,6 +419,92 @@ fn find_dat_via_hardlink(
             .join(file_name);
         if dat_path.exists() {
             return Some(dat_path.to_string_lossy().to_string());
+        }
+    }
+    tracing::warn!("[media:hardlink] .dat file not found on disk for md5={}", image_md5);
+    None
+}
+
+/// Fallback: look up the .dat filename from message_resource.db when hardlink.db
+/// hasn't been indexed yet. The packed_info blob in MessageResourceInfo contains
+/// the file hash used as the .dat filename.
+fn find_dat_via_resource_db(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    chat_id: &str,
+    local_id: i64,
+    create_time: i64,
+) -> Option<String> {
+    let resource_key = keys.get("message_resource.db")?;
+    let resource_db = get_db_path(account_dir, "message_resource.db");
+
+    // Look up chat_id integer from ChatName2Id
+    let chat_rows = query_wechat_db(
+        &resource_db,
+        resource_key,
+        &format!(
+            "SELECT rowid FROM ChatName2Id WHERE user_name = '{}' LIMIT 1;",
+            chat_id.replace('\'', "''")
+        ),
+    );
+    let chat_id_int = chat_rows.first()?.get("rowid")?.as_i64()?;
+
+    // Query packed_info from MessageResourceInfo
+    let info_rows = query_wechat_db(
+        &resource_db,
+        resource_key,
+        &format!(
+            "SELECT hex(packed_info) as hex_info FROM MessageResourceInfo
+             WHERE chat_id = {chat_id_int} AND message_local_id = {local_id}
+             LIMIT 1;"
+        ),
+    );
+    let hex_info = info_rows.first()?.get("hex_info")?.as_str()?.to_string();
+
+    // Extract the 32-char file hash from protobuf blob
+    // Format: 12 22 0A 20 <32 bytes of ASCII hex hash>
+    // The hash starts at byte offset 4 and is 32 bytes (64 hex chars)
+    let file_hash = extract_file_hash_from_packed_info(&hex_info)?;
+    tracing::info!("[media:resource-db] file_hash={} for local_id={}", file_hash, local_id);
+
+    // Build path: msg/attach/<md5(chatId)>/<year-month>/Img/<hash>.dat
+    let chat_hash = format!("{:x}", Md5::digest(chat_id.as_bytes()));
+    let dt = chrono::DateTime::from_timestamp(create_time, 0)?;
+    let year_month = dt.format("%Y-%m").to_string();
+
+    for base in &account_base_paths(account_dir) {
+        // Try mid-res .dat first, then _t.dat thumbnail
+        for suffix in &["", "_t"] {
+            let dat_path = Path::new(base)
+                .join("msg/attach")
+                .join(&chat_hash)
+                .join(&year_month)
+                .join("Img")
+                .join(format!("{file_hash}{suffix}.dat"));
+            if dat_path.exists() {
+                return Some(dat_path.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    tracing::warn!("[media:resource-db] file not on disk yet for hash={}", file_hash);
+    None
+}
+
+/// Extract the 32-char hex file hash from a MessageResourceInfo packed_info blob.
+/// The blob is protobuf-encoded: field 2 (tag 0x12), length-delimited, containing
+/// field 1 (tag 0x0A), 32 bytes of ASCII hex hash.
+fn extract_file_hash_from_packed_info(hex_info: &str) -> Option<String> {
+    let bytes = crate::tools::wechat_messages::hex_decode(hex_info)?;
+    // Find the ASCII hex hash: 32 chars [0-9a-f]
+    // It's at a fixed offset in the protobuf, but let's be robust and scan for it
+    for window in bytes.windows(32) {
+        if window.iter().all(|&b| b.is_ascii_hexdigit()) {
+            let candidate = std::str::from_utf8(window).ok()?;
+            // Verify it's lowercase hex (not random ASCII digits)
+            if candidate.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)) {
+                return Some(candidate.to_string());
+            }
         }
     }
     None
@@ -730,12 +834,20 @@ pub fn get_message_media(
         }
         3 => {
             // Image
+            tracing::info!(
+                "[media] image msg chat_id={}, local_id={}, create_time={}, content_len={}",
+                chat_id, local_id, create_time, content.len()
+            );
+
             // Try cached thumbnail first
             if let Some(thumb) =
                 get_image_thumbnail(account_dir, chat_id, local_id, create_time)
             {
+                tracing::info!("[media] found thumbnail for local_id={}", local_id);
                 return thumb;
             }
+            tracing::info!("[media] no thumbnail for local_id={}", local_id);
+
 
             // Try .dat decryption if we have image keys
             if let Some((aes_hex, xor_byte)) = image_keys_raw {
@@ -744,12 +856,26 @@ pub fn get_message_media(
                     xor_byte,
                 };
 
-                // Try hardlink.db path resolution
-                if let Some(dat_path) =
-                    find_dat_via_hardlink(account_dir, keys, chat_id, &content)
-                {
+                // Primary: look up filename from message_resource.db
+                if let Some(dat_path) = find_dat_via_resource_db(
+                    account_dir, keys, chat_id, local_id, create_time,
+                ) {
+                    tracing::info!("[media] found dat via resource-db: {}", dat_path);
                     return decrypt_and_return(&dat_path, &image_keys, local_id);
                 }
+
+                // Fallback: try hardlink.db (older images may not be in resource db)
+                if let Some(dat_path) = find_dat_via_hardlink(account_dir, keys, chat_id, &content) {
+                    tracing::info!("[media] found dat via hardlink: {}", dat_path);
+                    return decrypt_and_return(&dat_path, &image_keys, local_id);
+                }
+
+                tracing::warn!(
+                    "[media] no dat found for local_id={}, md5={}",
+                    local_id, xml_attr(&content, "md5").unwrap_or_default()
+                );
+            } else {
+                tracing::warn!("[media] no image keys available for local_id={}", local_id);
             }
 
             // Image exists but can't be retrieved
