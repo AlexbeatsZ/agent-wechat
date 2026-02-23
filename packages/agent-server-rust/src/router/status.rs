@@ -40,10 +40,19 @@ pub async fn auth_status() -> Json<serde_json::Value> {
         Some(s) => s,
         None => {
             return Json(serde_json::json!({
-                "isLoggedIn": false
+                "status": "unknown",
             }))
         }
     };
+
+    // Check if WeChat process is running first
+    let wechat_running = crate::tools::wechat_db::find_wechat_pid().is_some();
+    if !wechat_running {
+        return Json(serde_json::json!({
+            "status": "app_not_running",
+            "loggedInUser": session.logged_in_user,
+        }));
+    }
 
     let exec_options = ExecOptions {
         session: Some(session.clone()),
@@ -55,8 +64,8 @@ pub async fn auth_status() -> Json<serde_json::Value> {
         Ok(tree) => tree,
         Err(_) => {
             return Json(serde_json::json!({
-                "isLoggedIn": false,
-                "loggedInUser": session.logged_in_user
+                "status": "unknown",
+                "loggedInUser": session.logged_in_user,
             }))
         }
     };
@@ -91,15 +100,21 @@ pub async fn auth_status() -> Json<serde_json::Value> {
         context.save(&db);
     }
 
+    let status = if context.state.main_window.is_logged_in {
+        "logged_in"
+    } else {
+        "logged_out"
+    };
+
     tracing::info!(
-        "[auth_status] view={:?}, is_logged_in={}",
+        "[auth_status] view={:?}, status={}",
         context.state.main_window.view,
-        context.state.main_window.is_logged_in
+        status
     );
 
     Json(serde_json::json!({
-        "isLoggedIn": context.state.main_window.is_logged_in,
-        "loggedInUser": session.logged_in_user
+        "status": status,
+        "loggedInUser": session.logged_in_user,
     }))
 }
 

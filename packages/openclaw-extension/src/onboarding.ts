@@ -73,7 +73,7 @@ export const wechatOnboardingAdapter = {
 
     try {
       const auth = await client.authStatus();
-      if (auth.isLoggedIn) {
+      if (auth.status === "logged_in") {
         lines.push(
           `Logged in${auth.loggedInUser ? ` as ${auth.loggedInUser}` : ""}`,
         );
@@ -134,7 +134,7 @@ export const wechatOnboardingAdapter = {
     // 3. Check auth — offer to link during onboarding
     try {
       const auth = await client.authStatus();
-      if (!auth.isLoggedIn) {
+      if (auth.status !== "logged_in") {
         const wantsLink = await prompter.confirm({
           message: "WeChat not logged in. Link now?",
           default: true,

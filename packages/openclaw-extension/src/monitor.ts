@@ -1,5 +1,5 @@
 import { WeChatClient } from "@agent-wechat/shared";
-import type { Chat, Message, MediaResult } from "@agent-wechat/shared";
+import type { Chat, Message, MediaResult, AuthStatus } from "@agent-wechat/shared";
 import { createReplyPrefixOptions } from "openclaw/plugin-sdk";
 import type { ResolvedWeChatAccount } from "./types.js";
 import { getWeChatRuntime } from "./runtime.js";
@@ -95,6 +95,18 @@ function isMessageAllowed(
   return true; // "open"
 }
 
+function enqueueWeChatSystemEvent(text: string, contextKey: string): void {
+  try {
+    const core = getWeChatRuntime();
+    core.system.enqueueSystemEvent(text, {
+      sessionKey: "agent:main:main",
+      contextKey,
+    });
+  } catch {
+    // Don't crash the monitor if system event fails
+  }
+}
+
 export async function startWeChatMonitor(
   opts: WeChatMonitorOptions,
 ): Promise<void> {
@@ -104,6 +116,7 @@ export async function startWeChatMonitor(
   // Track last-seen message ID per chat
   const lastSeenId = new Map<string, number>();
   let lastAuthCheck = 0;
+  let prevStatus: AuthStatus["status"] | undefined = undefined;
 
   // Report initial status as running
   setStatus({
@@ -124,14 +137,31 @@ export async function startWeChatMonitor(
         lastAuthCheck = now;
         try {
           const auth = await client.authStatus();
+          const isLinked = auth.status === "logged_in";
           setStatus({
             accountId: account.accountId,
             running: true,
             connected: true,
-            linked: auth.isLoggedIn,
+            linked: isLinked,
+            authStatus: auth.status,
           });
-          if (!auth.isLoggedIn) {
-            log?.info?.(`[wechat:${account.accountId}] Not authenticated`);
+
+          // Notify agent on meaningful auth transitions
+          if (prevStatus === "logged_in" && !isLinked) {
+            const msg = auth.status === "app_not_running"
+              ? "[WeChat] Application stopped. It will restart automatically — you may need to log in again."
+              : "[WeChat] Session lost. Please log in again using the wechat_login tool.";
+            enqueueWeChatSystemEvent(msg, "wechat:auth_lost");
+          } else if (prevStatus === undefined && !isLinked) {
+            enqueueWeChatSystemEvent(
+              "[WeChat] Not logged in. Use the wechat_login tool to authenticate.",
+              "wechat:auth_required",
+            );
+          }
+          prevStatus = auth.status;
+
+          if (!isLinked) {
+            log?.info?.(`[wechat:${account.accountId}] Not authenticated (status: ${auth.status})`);
             await sleep(account.pollIntervalMs, abortSignal);
             continue;
           }
@@ -143,6 +173,13 @@ export async function startWeChatMonitor(
             linked: false,
             lastError: String(err),
           });
+          if (prevStatus === "logged_in") {
+            enqueueWeChatSystemEvent(
+              "[WeChat] Cannot reach agent-wechat server. The container may have stopped.",
+              "wechat:server_unreachable",
+            );
+          }
+          prevStatus = undefined;
           log?.error?.(
             `[wechat:${account.accountId}] Auth check failed: ${err}`,
           );

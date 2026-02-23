@@ -317,7 +317,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
       // Check if already logged in
       try {
         const auth = await client.authStatus();
-        if (auth.isLoggedIn) {
+        if (auth.status === "logged_in") {
           runtime.log(
             `Already logged in${auth.loggedInUser ? ` as ${auth.loggedInUser}` : ""}`,
           );
@@ -404,7 +404,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
       const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
       try {
         const auth = await client.authStatus();
-        if (!auth.isLoggedIn || !auth.loggedInUser) return null;
+        if (auth.status !== "logged_in" || !auth.loggedInUser) return null;
         return { kind: "user" as const, id: auth.loggedInUser };
       } catch {
         return null;
@@ -460,7 +460,7 @@ export const wechatPlugin: ChannelPlugin<ResolvedWeChatAccount> = {
       const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
       try {
         const auth = await client.authStatus();
-        if (!auth.isLoggedIn) {
+        if (auth.status !== "logged_in") {
           return { ok: false, reason: "wechat-not-logged-in" };
         }
         return { ok: true, reason: "ok" };

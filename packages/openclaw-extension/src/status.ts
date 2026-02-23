@@ -6,6 +6,7 @@ export interface AccountSnapshot {
   running: boolean;
   connected: boolean;
   linked?: boolean;
+  authStatus?: string;
   lastError?: string;
 }
 
@@ -32,6 +33,14 @@ export async function collectWeChatStatusIssues(
           ? `Cannot reach agent-wechat server: ${snapshot.lastError}`
           : "Cannot reach agent-wechat server.",
         fix: "Ensure the agent-wechat container is running (pnpm cli up)",
+      });
+    } else if (snapshot.authStatus === "app_not_running") {
+      issues.push({
+        channel: "wechat",
+        accountId: snapshot.accountId,
+        kind: "runtime",
+        message: "WeChat application is not running. It should restart automatically.",
+        fix: "If it doesn't restart, try: wx down && wx up",
       });
     } else if (snapshot.linked === false) {
       issues.push({

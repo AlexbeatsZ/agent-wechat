@@ -423,7 +423,7 @@ The agent-server (Rust, port 6174) exposes a REST + WebSocket API consumed by th
 
 **GET /api/status** → `{ container, loginState: { status }, version }`
 
-**GET /api/status/auth** → `{ isLoggedIn: bool, loggedInUser: string? }`
+**GET /api/status/auth** → `{ status: "logged_in" | "logged_out" | "app_not_running" | "unknown", loggedInUser?: string }`
 
 **POST /api/status/login** → `{ success: bool, state: { status }, qrDataUrl? }`
 

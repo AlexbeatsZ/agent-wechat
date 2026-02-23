@@ -18,7 +18,7 @@ export type StatusResponse = {
   version: string;
 };
 export type AuthStatus = {
-  isLoggedIn: boolean;
+  status: "logged_in" | "logged_out" | "app_not_running" | "unknown";
   loggedInUser?: string;
 };
 

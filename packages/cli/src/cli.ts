@@ -203,11 +203,11 @@ authCmd
   .description("Check login status")
   .action(async () => {
     const client = getClient();
-    const { isLoggedIn, loggedInUser } = await client.authStatus();
-    if (isLoggedIn) {
-      console.log(`Logged in${loggedInUser ? ` as ${loggedInUser}` : ""}`);
+    const auth = await client.authStatus();
+    if (auth.status === "logged_in") {
+      console.log(`Logged in${auth.loggedInUser ? ` as ${auth.loggedInUser}` : ""}`);
     } else {
-      console.log("Not logged in");
+      console.log(`Status: ${auth.status.replace(/_/g, " ")}`);
     }
   });
 

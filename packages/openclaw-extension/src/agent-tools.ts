@@ -38,9 +38,9 @@ export function createWeChatLoginTool(account: ResolvedWeChatAccount) {
         case "status": {
           try {
             const auth = await client.authStatus();
-            const text = auth.isLoggedIn
+            const text = auth.status === "logged_in"
               ? `WeChat is logged in${auth.loggedInUser ? ` as ${auth.loggedInUser}` : ""}.`
-              : "WeChat is not logged in.";
+              : `WeChat status: ${auth.status.replace(/_/g, " ")}.`;
             return {
               content: [{ type: "text" as const, text }],
               details: auth,
