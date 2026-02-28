@@ -105,18 +105,6 @@ where
                 }, plan_state);
             }
             tracing::warn!("[exec] Unknown state ({}s), waiting...", elapsed.as_secs());
-            emit(SubscriptionEvent {
-                event_type: "status".to_string(),
-                data: [(
-                    "message".to_string(),
-                    serde_json::Value::String(format!(
-                        "Unknown UI state ({}s), waiting...",
-                        elapsed.as_secs()
-                    )),
-                )]
-                .into_iter()
-                .collect(),
-            });
             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
             continue;
         }
