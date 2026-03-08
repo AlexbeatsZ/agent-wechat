@@ -144,10 +144,9 @@ fi
 # Start VNC (internal only, accessed via noVNC)
 # ============================================
 if [ "${ENABLE_VNC:-1}" = "1" ]; then
-  # -shared: allow multiple connections (needed for vncdotool)
-  # -xkb: better keyboard handling
-  # -listen 127.0.0.1: internal only (noVNC/websockify connects locally)
-  x11vnc -display "$DISPLAY" -forever -nopw -shared -xkb -rfbport 5900 -listen 127.0.0.1 &
+  # -nopw: no VNC-level password (localhost only; auth enforced by agent-server proxy with full token)
+  # -viewonly: no remote input
+  x11vnc -display "$DISPLAY" -forever -nopw -shared -viewonly -xkb -rfbport 5900 -listen 127.0.0.1 &
 fi
 
 # ============================================
@@ -155,8 +154,10 @@ fi
 # ============================================
 if [ "${ENABLE_VNC:-1}" = "1" ] && [ -d /opt/novnc ]; then
   NOVNC_PORT="${NOVNC_PORT:-6080}"
-  websockify --web /opt/novnc "$NOVNC_PORT" localhost:5900 &
-  echo "noVNC: http://localhost:$NOVNC_PORT/vnc.html?autoconnect=true"
+  # websockify on localhost only — accessed via agent-server's /vnc/ proxy (with full token auth)
+  websockify --web /opt/novnc 127.0.0.1:"$NOVNC_PORT" localhost:5900 &
+  AGENT_PORT="${AGENT_PORT:-6174}"
+  echo "noVNC: http://localhost:$AGENT_PORT/vnc/?token=<your-token>&autoconnect=true"
 fi
 
 # ============================================
