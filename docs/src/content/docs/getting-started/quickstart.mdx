@@ -1,0 +1,67 @@
+---
+title: Quick Start
+description: Get agent-wechat running in under 5 minutes.
+---
+
+The fastest way to get started is with the CLI.
+
+## 1. Install the CLI
+
+```bash
+npm install -g @agent-wechat/cli
+```
+
+This installs the `wx` command globally.
+
+## 2. Start the container
+
+```bash
+wx up
+```
+
+This automatically pulls the Docker image from `ghcr.io/thisnick/agent-wechat` and starts the container with the correct flags, volume mounts, and auth token.
+
+## 3. Log in to WeChat
+
+```bash
+wx auth login
+```
+
+A QR code is displayed in your terminal. Scan it with WeChat on your phone (tap **+** > **Scan**), then confirm the login.
+
+:::tip
+You only need to scan the QR code once. The session persists across container restarts.
+:::
+
+## 4. Interact with WeChat
+
+```bash
+# List your chats
+wx chats list
+
+# Find a chat by name
+wx chats find "John"
+
+# Send a message
+wx messages send <chatId> --text "Hello from agent-wechat!"
+
+# Read messages
+wx messages list <chatId>
+```
+
+## 5. View the container via VNC
+
+Open your browser to `http://localhost:6174/vnc/` to see the WeChat desktop UI running inside the container.
+
+## 6. Stop the container
+
+```bash
+wx down
+```
+
+## Next steps
+
+- [CLI commands reference](/getting-started/cli/commands) — full list of everything the `wx` command can do
+- [Docker Compose setup](/getting-started/container-setup/docker-compose) — for production or networked deployments
+- [OpenClaw integration](/integrations/openclaw/setup) — connect an AI agent to WeChat
+- [Wechaty integration](/integrations/wechaty/puppet-setup) — use existing Wechaty bots
