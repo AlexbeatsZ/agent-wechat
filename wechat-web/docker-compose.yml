@@ -1,0 +1,33 @@
+services:
+  bff:
+    image: node:22
+    working_dir: /app
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @wechat-web/bff start"
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - ../.agent-wechat-home/.config/agent-wechat/token:/agent-token:ro
+    environment:
+      - AGENT_WECHAT_TOKEN_FILE=/agent-token
+      - BFF_HOST=0.0.0.0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    image: node:22
+    working_dir: /app
+    command: sh -c "corepack enable && pnpm install && pnpm --filter @wechat-web/web dev"
+    ports:
+      - "5173:5173"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    environment:
+      - BFF_URL=http://bff:8787
+      - WEB_PORT=5173
+    depends_on:
+      - bff

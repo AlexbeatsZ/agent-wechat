@@ -1,0 +1,17 @@
+{
+  "name": "wechat-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "concurrently -n bff,web -c cyan,green \"pnpm --filter @wechat-web/bff dev\" \"pnpm --filter @wechat-web/web dev\"",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.3"
+  }
+}

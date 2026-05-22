@@ -26,6 +26,7 @@ docs/public/og/
 
 # Local data
 .data
+.agent-wechat-home/
 
 # Claude settings (local only)
 .claude
