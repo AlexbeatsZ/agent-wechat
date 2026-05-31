@@ -5,6 +5,7 @@ export const statusSchema = z.object({
   loggedIn: z.boolean(),
   status: z.string(),
   loggedInUser: z.string().optional(),
+  automationReady: z.boolean().optional(),
   checkedAt: z.string(),
   error: z.string().optional()
 });
@@ -13,8 +14,10 @@ export const chatSchema = z.object({
   id: z.string(),
   displayName: z.string(),
   avatarUrl: z.string().nullable(),
+  kind: z.enum(["individual", "group", "official", "service", "openim", "system"]),
   lastMessagePreview: z.string().optional(),
   lastMessageTime: z.string().optional(),
+  lastMsgLocalId: z.number().optional(),
   unreadCount: z.number(),
   isGroup: z.boolean(),
   raw: z.unknown()
@@ -40,8 +43,16 @@ export const messageSchema = z.object({
 });
 
 export const sendRequestSchema = z.object({
-  text: z.string().trim().min(1).max(5000)
-});
+  text: z.string().trim().min(1).max(5000).optional(),
+  image: z.object({
+    data: z.string().min(1),
+    mimeType: z.string().min(1)
+  }).optional(),
+  file: z.object({
+    data: z.string().min(1),
+    filename: z.string().min(1)
+  }).optional()
+}).refine((value) => Boolean(value.text || value.image || value.file), "text, image, or file is required");
 
 export const sendResponseSchema = z.object({
   ok: z.boolean(),
@@ -55,6 +66,15 @@ export const sessionSchema = z.object({
   authenticated: z.boolean()
 });
 
+export const serverFileSchema = z.object({
+  id: z.string(),
+  filename: z.string(),
+  size: z.number(),
+  modifiedAt: z.string(),
+  sourcePathHint: z.string(),
+  contentType: z.string()
+});
+
 export type StatusDto = z.infer<typeof statusSchema>;
 export type ChatDto = z.infer<typeof chatSchema>;
 export type MessageDto = z.infer<typeof messageSchema>;
@@ -63,3 +83,4 @@ export type Direction = z.infer<typeof directionSchema>;
 export type SendRequest = z.infer<typeof sendRequestSchema>;
 export type SendResponse = z.infer<typeof sendResponseSchema>;
 export type SessionDto = z.infer<typeof sessionSchema>;
+export type ServerFileDto = z.infer<typeof serverFileSchema>;

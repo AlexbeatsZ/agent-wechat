@@ -44,7 +44,8 @@ pub fn close_window() -> Action {
 
 pub fn click_login() -> Action {
     Action::ClickSelector {
-        selector: r#"push-button[name=/^(Log In|Open WeChat)$/]"#.to_string(),
+        selector: r#"push-button[name=/^(Log In|Open WeChat|Enter Weixin|Enter WeChat)$/]"#
+            .to_string(),
     }
 }
 

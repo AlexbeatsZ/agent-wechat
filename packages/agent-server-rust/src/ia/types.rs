@@ -366,6 +366,12 @@ pub struct Chat {
     pub is_group: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
+    pub local_type: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub session_type: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
     pub last_msg_local_id: Option<i64>,
 }
 

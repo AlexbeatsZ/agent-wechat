@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod compose;
 pub mod helpers;
 pub mod selectors;
 pub mod states;
@@ -105,7 +106,8 @@ pub fn identify_states(a11y_tree: &A11yNode, screenshot: &str) -> IdentifiedStat
         }
 
         // Stop if we found all slots
-        if main_window.is_some() && popup.is_some() && contact_card.is_some() && settings.is_some() {
+        if main_window.is_some() && popup.is_some() && contact_card.is_some() && settings.is_some()
+        {
             break;
         }
     }

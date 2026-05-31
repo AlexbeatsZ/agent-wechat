@@ -1,4 +1,4 @@
-import type { AgentChat, AgentClient, AgentMedia, AgentMessage, AgentSendResult } from "./types.js";
+import type { AgentChat, AgentClient, AgentFileDownload, AgentLoginOptions, AgentMedia, AgentMessage, AgentSendPayload, AgentSendResult, AgentServerFile } from "./types.js";
 
 const now = new Date().toISOString();
 
@@ -14,13 +14,33 @@ let messages: AgentMessage[] = [
   { localId: 4, serverId: 1004, chatId: "room@chatroom", sender: "bob", senderName: "Bob", type: 49, content: "<appmsg><title><![CDATA[demo.pdf]]></title><totallen>2048</totallen></appmsg>", timestamp: now, isSelf: false }
 ];
 
+const serverFiles: AgentServerFile[] = [
+  {
+    id: "mock-demo-pdf",
+    filename: "demo.pdf",
+    size: 8,
+    modifiedAt: now,
+    sourcePathHint: "msg/file/demo.pdf",
+    contentType: "application/pdf"
+  }
+];
+
 export class MockAgentClient implements AgentClient {
   async authStatus(): Promise<unknown> {
     return { status: "logged_in", loggedInUser: "Mock User" };
   }
 
+  async *loginEvents(_options: AgentLoginOptions): AsyncIterable<unknown> {
+    yield { type: "status", message: "Mock login flow started" };
+    yield { type: "login_success", userId: "mock-user" };
+  }
+
   async listChats(limit: number, offset: number): Promise<AgentChat[]> {
     return chats.slice(offset, offset + limit);
+  }
+
+  async openChat(_chatId: string, _clearUnreads: boolean): Promise<unknown> {
+    return { ok: true };
   }
 
   async listMessages(chatId: string, limit: number, offset: number): Promise<AgentMessage[]> {
@@ -39,13 +59,28 @@ export class MockAgentClient implements AgentClient {
     };
   }
 
-  async sendMessage(chatId: string, text: string): Promise<AgentSendResult> {
+  async sendMessage(chatId: string, payload: AgentSendPayload): Promise<AgentSendResult> {
     const localId = Math.max(...messages.map((message) => message.localId)) + 1;
+    const text = payload.text || payload.file?.filename || "[图片]";
+    const type = payload.file ? 49 : payload.image ? 3 : 1;
     messages = [
       ...messages,
-      { localId, serverId: 1000 + localId, chatId, sender: "me", senderName: "我", type: 1, content: text, timestamp: new Date().toISOString(), isSelf: true }
+      { localId, serverId: 1000 + localId, chatId, sender: "me", senderName: "我", type, content: text, timestamp: new Date().toISOString(), isSelf: true }
     ];
     return { success: true };
+  }
+
+  async listFiles(limit: number, offset: number, _type: string): Promise<AgentServerFile[]> {
+    return serverFiles.slice(offset, offset + limit);
+  }
+
+  async downloadFile(id: string): Promise<AgentFileDownload> {
+    const file = serverFiles.find((item) => item.id === id) || serverFiles[0]!;
+    return { file, data: Buffer.from("mock pdf").toString("base64") };
+  }
+
+  async deleteFile(_id: string): Promise<{ ok: boolean; error?: string }> {
+    return { ok: true };
   }
 
   async screenshot(): Promise<unknown> {

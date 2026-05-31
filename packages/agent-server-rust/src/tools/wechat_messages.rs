@@ -68,11 +68,9 @@ fn clean_content(content: &str, msg_type: i32) -> String {
         // Image (type 3): replace XML with empty string
         3 if content.contains("<img") => String::new(),
         // Emoji (type 47): show cdnurl or [emoji]
-        47 if content.contains("<emoji") => {
-            extract_xml_attr(content, "cdnurl")
-                .filter(|u| u.starts_with("http"))
-                .unwrap_or_else(|| "[emoji]".to_string())
-        }
+        47 if content.contains("<emoji") => extract_xml_attr(content, "cdnurl")
+            .filter(|u| u.starts_with("http"))
+            .unwrap_or_else(|| "[emoji]".to_string()),
         // Appmsg (type 49): handle subtypes
         49 if content.contains("<msg>") => {
             let title = extract_xml_tag(content, "title").unwrap_or_default();
@@ -145,7 +143,11 @@ fn extract_xml_attr(xml: &str, attr: &str) -> Option<String> {
     let start = xml.find(&pattern)? + pattern.len();
     let end = xml[start..].find('"')? + start;
     let val = xml[start..end].trim().to_string();
-    if val.is_empty() { None } else { Some(val) }
+    if val.is_empty() {
+        None
+    } else {
+        Some(val)
+    }
 }
 
 /// Extract text between XML tags: <tag>text</tag>
@@ -160,7 +162,11 @@ pub(crate) fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     if val.starts_with("<![CDATA[") && val.ends_with("]]>") {
         val = val[9..val.len() - 3].to_string();
     }
-    if val.is_empty() { None } else { Some(val) }
+    if val.is_empty() {
+        None
+    } else {
+        Some(val)
+    }
 }
 
 /// Check if the source XML indicates the current user is @-mentioned.
@@ -201,15 +207,75 @@ pub fn find_message_db<'a>(
         let check = query_wechat_db(
             &db_path,
             key,
-            &format!(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}';"
-            ),
+            &format!("SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}';"),
         );
         if !check.is_empty() {
             return Some((db_name.to_string(), key));
         }
     }
     None
+}
+
+fn list_session_summary_message(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    chat_id: &str,
+) -> Vec<Message> {
+    let session_key = match keys.get("session.db") {
+        Some(k) => k,
+        None => return Vec::new(),
+    };
+    let session_db = get_db_path(account_dir, "session.db");
+    let escaped = chat_id.replace('\'', "''");
+    let rows = query_wechat_db(
+        &session_db,
+        session_key,
+        &format!(
+            "SELECT summary, last_timestamp, last_msg_locald_id
+             FROM SessionTable
+             WHERE username = '{escaped}' AND summary != ''
+             LIMIT 1;"
+        ),
+    );
+    let row = match rows.first() {
+        Some(r) => r,
+        None => return Vec::new(),
+    };
+    let content = row
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if content.is_empty() {
+        return Vec::new();
+    }
+    let local_id = row
+        .get("last_msg_locald_id")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let timestamp = row
+        .get("last_timestamp")
+        .and_then(|v| v.as_i64())
+        .map(|t| {
+            chrono::DateTime::from_timestamp(t, 0)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+
+    vec![Message {
+        local_id,
+        server_id: 0,
+        chat_id: chat_id.to_string(),
+        sender: None,
+        sender_name: None,
+        msg_type: 1,
+        content,
+        timestamp,
+        is_mentioned: None,
+        is_self: Some(false),
+        reply: None,
+    }]
 }
 
 /// List messages for a specific chat.
@@ -228,7 +294,7 @@ pub fn list_messages(
 
     let (db_name, key) = match find_message_db(account_dir, keys, chat_id) {
         Some(dk) => dk,
-        None => return Vec::new(),
+        None => return list_session_summary_message(account_dir, keys, chat_id),
     };
     let db_path = get_db_path(account_dir, &db_name);
 
@@ -255,7 +321,8 @@ pub fn list_messages(
         let mut map = HashMap::new();
         if let Some(contact_key) = keys.get("contact.db") {
             // Collect unique sender wxids
-            let senders: Vec<String> = rows.iter()
+            let senders: Vec<String> = rows
+                .iter()
                 .filter_map(|row| {
                     row.get("sender_name")
                         .and_then(|v| v.as_str())
@@ -268,7 +335,11 @@ pub fn list_messages(
 
             if !senders.is_empty() {
                 let contact_db = get_db_path(account_dir, "contact.db");
-                let placeholders = senders.iter().map(|s| format!("'{}'", s.replace('\'', "''"))).collect::<Vec<_>>().join(",");
+                let placeholders = senders
+                    .iter()
+                    .map(|s| format!("'{}'", s.replace('\'', "''")))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 let contacts = query_wechat_db(
                     &contact_db,
                     contact_key,
@@ -276,8 +347,15 @@ pub fn list_messages(
                 );
                 for c in contacts {
                     if let Some(username) = c.get("username").and_then(|v| v.as_str()) {
-                        let name = c.get("remark").and_then(|v| v.as_str()).filter(|s| !s.is_empty())
-                            .or_else(|| c.get("nick_name").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+                        let name = c
+                            .get("remark")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| {
+                                c.get("nick_name")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                            })
                             .unwrap_or(username);
                         map.insert(username.to_string(), name.to_string());
                     }
@@ -290,14 +368,8 @@ pub fn list_messages(
     rows.iter()
         .filter_map(|row| {
             let local_id = row.get("local_id")?.as_i64()?;
-            let server_id = row
-                .get("server_id")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            let msg_type = row
-                .get("local_type")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32;
+            let server_id = row.get("server_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let msg_type = row.get("local_type").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
 
             let hex_content = row
                 .get("hex_content")
@@ -312,18 +384,19 @@ pub fn list_messages(
             let raw_content = decode_message_content(hex_content, is_compressed);
 
             // Get sender from Name2Id join (works for both group and 1:1 chats)
-            let sender = row
+            let db_sender = row
                 .get("sender_name")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
 
             // Strip group sender prefix from content ("wxid:\ncontent" format)
-            let body = if is_group {
-                extract_group_sender(&raw_content).1
+            let (group_prefix_sender, body) = if is_group {
+                extract_group_sender(&raw_content)
             } else {
-                raw_content
+                (None, raw_content)
             };
+            let sender = group_prefix_sender.or(db_sender);
 
             // Extract reply info before cleaning (needs raw XML)
             let reply = extract_reply_info(&body, msg_type);
@@ -343,10 +416,7 @@ pub fn list_messages(
 
             // Check @-mention from source XML (only for group chats)
             let is_mentioned = if is_group {
-                let hex_source = row
-                    .get("hex_source")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let hex_source = row.get("hex_source").and_then(|v| v.as_str()).unwrap_or("");
                 let source_compressed = row
                     .get("source_compressed")
                     .and_then(|v| v.as_i64())
@@ -377,9 +447,18 @@ pub fn list_messages(
             };
 
             // Check if message was sent by the logged-in user
-            let is_self = sender.as_ref().map(|s| account_dir.starts_with(s.as_str()));
+            let is_self = sender.as_ref().and_then(|s| {
+                if s == chat_id {
+                    Some(false)
+                } else if account_dir.starts_with(s.as_str()) || s.starts_with(account_dir) {
+                    Some(true)
+                } else {
+                    None
+                }
+            });
 
-            let sender_name = sender.as_ref()
+            let sender_name = sender
+                .as_ref()
                 .and_then(|wxid| contact_names.get(wxid))
                 .cloned();
 

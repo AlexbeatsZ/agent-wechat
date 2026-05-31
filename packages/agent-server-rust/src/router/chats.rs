@@ -1,4 +1,7 @@
-use axum::{extract::{Path, Query}, Json};
+use axum::{
+    extract::{Path, Query},
+    Json,
+};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
@@ -102,7 +105,11 @@ pub async fn get_chat(Path(id): Path<String>) -> Json<Option<Chat>> {
         }
     }
 
-    Json(wechat_chats::get_chat_by_username(&logged_in_user, &keys, &id))
+    Json(wechat_chats::get_chat_by_username(
+        &logged_in_user,
+        &keys,
+        &id,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -178,20 +185,16 @@ pub async fn open_chat(
         }));
     }
 
-    if chat_id.starts_with("gh_") {
-        return Json(serde_json::json!({
-            "ok": false,
-            "error": "Opening official accounts is not supported"
-        }));
-    }
-
     let mut context = {
         let db = get_db();
         create_context(session, &db)
     };
 
     let plan = ChatOpenPlan;
-    let params = ChatOpenParams { chat_id, clear_unreads };
+    let params = ChatOpenParams {
+        chat_id,
+        clear_unreads,
+    };
     let cancel = CancellationToken::new();
     let noop_emit = |_: SubscriptionEvent| {};
 
@@ -200,7 +203,10 @@ pub async fn open_chat(
 
     if result.success {
         if let Some(open_result) = plan_state.result {
-            Json(serde_json::to_value(open_result).unwrap_or_else(|_| serde_json::json!({"ok": true})))
+            Json(
+                serde_json::to_value(open_result)
+                    .unwrap_or_else(|_| serde_json::json!({"ok": true})),
+            )
         } else {
             Json(serde_json::json!({ "ok": true }))
         }

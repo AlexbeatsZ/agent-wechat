@@ -1,7 +1,9 @@
 use super::Plan;
 use crate::ia::actions;
+use crate::ia::compose::{find_compose_area, summarize_compose_candidates};
 use crate::ia::selectors::query_selector;
 use crate::ia::types::*;
+use crate::sessions::manager::get_session;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
 use crate::tools::exec::{exec_command, ExecOptions};
 
@@ -26,50 +28,9 @@ pub enum SendMessagePhase {
 pub struct SendMessagePlanState {
     pub phase: SendMessagePhase,
     pub open_result: Option<OpenChatResult>,
+    pub focus_attempts: u32,
     pub confirm_attempts: u32,
-}
-
-fn find_edit_and_send_button(a11y: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
-    let send_btn = query_selector(a11y, r#"push-button[name="Send(S)"]"#)?;
-    // Find sibling EDITABLE text node via parent
-    // Since we don't have parent refs in the tree-based approach,
-    // we search the tree for the pattern
-    find_edit_near_send(a11y, send_btn)
-}
-
-fn find_edit_near_send<'a>(
-    root: &'a A11yNode,
-    _send_btn: &A11yNode,
-) -> Option<(&'a A11yNode, &'a A11yNode)> {
-    // Walk tree looking for a parent that has both an EDITABLE text and Send(S) button
-    find_edit_send_pair(root)
-}
-
-fn find_edit_send_pair(node: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
-    if let Some(children) = &node.children {
-        let send_btn = children.iter().find(|c| {
-            c.role == "push-button" && c.name == "Send(S)"
-        });
-        let edit_node = children.iter().find(|c| {
-            c.role == "text"
-                && c.states
-                    .as_ref()
-                    .map(|s| s.iter().any(|st| st == "EDITABLE"))
-                    .unwrap_or(false)
-        });
-
-        if let (Some(edit), Some(send)) = (edit_node, send_btn) {
-            return Some((edit, send));
-        }
-
-        // Recurse
-        for child in children {
-            if let Some(result) = find_edit_send_pair(child) {
-                return Some(result);
-            }
-        }
-    }
-    None
+    pub error: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -77,13 +38,17 @@ impl Plan for SendMessagePlan {
     type PlanState = SendMessagePlanState;
     type Params = SendMessageParams;
 
-    fn id(&self) -> &str { "send_message" }
+    fn id(&self) -> &str {
+        "send_message"
+    }
 
     fn initial_plan_state(&self) -> SendMessagePlanState {
         SendMessagePlanState {
             phase: SendMessagePhase::Opening,
             open_result: None,
+            focus_attempts: 0,
             confirm_attempts: 0,
+            error: None,
         }
     }
 
@@ -98,7 +63,7 @@ impl Plan for SendMessagePlan {
         identified: &IdentifiedStates,
         plan_state: &mut SendMessagePlanState,
         a11y: &A11yNode,
-        _session_id: &str,
+        session_id: &str,
     ) -> Option<SelectedAction> {
         let main_state_id = identified.main_window.as_ref().map(|m| m.state_id.as_str());
 
@@ -106,7 +71,10 @@ impl Plan for SendMessagePlan {
         if state.popup.is_some() && identified.popup.is_some() {
             return Some(SelectedAction {
                 action: actions::dismiss_popup(),
-                frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                frame: identified
+                    .main_window
+                    .as_ref()
+                    .and_then(|m| m.frame.clone()),
             });
         }
 
@@ -114,21 +82,30 @@ impl Plan for SendMessagePlan {
             match &plan_state.phase {
                 SendMessagePhase::Opening => {
                     if main_state_id != Some("chat") && main_state_id != Some("chat_open") {
+                        plan_state.error = Some("微信窗口未进入聊天页".to_string());
                         return None;
                     }
 
                     let chat_list_item = query_selector(a11y, r#"list[name="Chats"] > list-item"#);
                     let click_xy = chat_list_item.and_then(|item| {
-                        item.bounds.as_ref().map(|b| (
-                            (b.x + b.width / 2.0).round(),
-                            (b.y + b.height / 2.0).round(),
-                        ))
+                        item.bounds.as_ref().map(|b| {
+                            (
+                                (b.x + b.width / 2.0).round(),
+                                (b.y + b.height / 2.0).round(),
+                            )
+                        })
                     });
 
                     let force = main_state_id == Some("chat");
-                    let result = open_chat(&params.chat_id, force, click_xy).await;
+                    let result = open_chat(session_id, &params.chat_id, force, click_xy).await;
 
                     if !result.ok {
+                        plan_state.error = Some(
+                            result
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| "无法打开聊天".to_string()),
+                        );
                         return None;
                     }
 
@@ -139,7 +116,10 @@ impl Plan for SendMessagePlan {
                     if !skipped {
                         return Some(SelectedAction {
                             action: actions::wait_short(),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
                     continue;
@@ -147,13 +127,46 @@ impl Plan for SendMessagePlan {
 
                 SendMessagePhase::Focusing => {
                     if main_state_id != Some("chat_open") {
+                        plan_state.focus_attempts += 1;
+                        if plan_state.focus_attempts < 6 {
+                            return Some(SelectedAction {
+                                action: actions::wait_short(),
+                                frame: identified
+                                    .main_window
+                                    .as_ref()
+                                    .and_then(|m| m.frame.clone()),
+                            });
+                        }
+                        plan_state.error = Some("聊天未打开".to_string());
                         return None;
                     }
 
-                    let found = find_edit_and_send_button(a11y);
-                    let (edit_node, _) = match found {
-                        Some(f) => f,
-                        None => return None,
+                    let found = find_compose_area(a11y);
+                    let edit_node = match found {
+                        Some(f) => f.edit,
+                        None => {
+                            plan_state.focus_attempts += 1;
+                            if plan_state.focus_attempts < 10 {
+                                tracing::info!(
+                                    "[send_message] waiting for compose area attempt={}: {}",
+                                    plan_state.focus_attempts,
+                                    summarize_compose_candidates(a11y)
+                                );
+                                return Some(SelectedAction {
+                                    action: actions::wait(500),
+                                    frame: identified
+                                        .main_window
+                                        .as_ref()
+                                        .and_then(|m| m.frame.clone()),
+                                });
+                            }
+                            tracing::warn!(
+                                "[send_message] compose area not found while focusing: {}",
+                                summarize_compose_candidates(a11y)
+                            );
+                            plan_state.error = Some("未找到输入框或发送按钮".to_string());
+                            return None;
+                        }
                     };
 
                     plan_state.phase = SendMessagePhase::Inputting;
@@ -171,15 +184,24 @@ impl Plan for SendMessagePlan {
                     if let Some(bounds) = &edit_node.bounds {
                         return Some(SelectedAction {
                             action: actions::click_bounds(bounds),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
+                    plan_state.error = Some("输入框没有可点击区域".to_string());
                     return None;
                 }
 
                 SendMessagePhase::Inputting => {
-                    let found = find_edit_and_send_button(a11y);
+                    let found = find_compose_area(a11y);
                     if found.is_none() {
+                        tracing::warn!(
+                            "[send_message] compose area not found while inputting: {}",
+                            summarize_compose_candidates(a11y)
+                        );
+                        plan_state.error = Some("未找到输入框或发送按钮".to_string());
                         return None;
                     }
 
@@ -187,13 +209,35 @@ impl Plan for SendMessagePlan {
 
                     // File
                     if let Some(fp) = &params.file_path {
-                        exec_command("paste-file", &[fp], &ExecOptions::default()).await;
+                        let exec_options = get_session(session_id)
+                            .or_else(|| get_session("default"))
+                            .map(|session| ExecOptions {
+                                session: Some(session),
+                                timeout_ms: 60_000,
+                            })
+                            .unwrap_or_default();
+                        let paste = exec_command("paste-file", &[fp], &exec_options).await;
+                        if paste.exit_code != 0 {
+                            let detail = if paste.stderr.is_empty() {
+                                paste.stdout
+                            } else {
+                                paste.stderr
+                            };
+                            plan_state.error = Some(format!("文件粘贴失败: {detail}"));
+                            return None;
+                        }
+                        plan_state.phase = SendMessagePhase::Done;
                         return Some(SelectedAction {
                             action: actions::sequence(vec![
                                 Action::Wait { ms: 100 },
-                                Action::Key { combo: "Return".to_string() },
+                                Action::Key {
+                                    combo: "Return".to_string(),
+                                },
                             ]),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -203,37 +247,78 @@ impl Plan for SendMessagePlan {
                         if let Some(mime) = &params.image_mime {
                             args.push(mime);
                         }
-                        exec_command("paste-image", &args, &ExecOptions::default()).await;
+                        let exec_options = get_session(session_id)
+                            .or_else(|| get_session("default"))
+                            .map(|session| ExecOptions {
+                                session: Some(session),
+                                timeout_ms: 60_000,
+                            })
+                            .unwrap_or_default();
+                        let paste = exec_command("paste-image", &args, &exec_options).await;
+                        if paste.exit_code != 0 {
+                            let detail = if paste.stderr.is_empty() {
+                                paste.stdout
+                            } else {
+                                paste.stderr
+                            };
+                            plan_state.error = Some(format!("图片粘贴失败: {detail}"));
+                            return None;
+                        }
+                        plan_state.phase = SendMessagePhase::Done;
                         return Some(SelectedAction {
                             action: actions::sequence(vec![
                                 Action::Wait { ms: 100 },
-                                Action::Key { combo: "Return".to_string() },
+                                Action::Key {
+                                    combo: "Return".to_string(),
+                                },
                             ]),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
 
                     // Text
                     if let Some(msg) = &params.message {
+                        plan_state.phase = SendMessagePhase::Done;
                         return Some(SelectedAction {
                             action: actions::sequence(vec![
-                                Action::Key { combo: "ctrl+a".to_string() },
-                                Action::Type { text: msg.clone(), selector: None },
+                                Action::Key {
+                                    combo: "ctrl+a".to_string(),
+                                },
+                                Action::Type {
+                                    text: msg.clone(),
+                                    selector: None,
+                                },
                                 Action::Wait { ms: 100 },
-                                Action::Key { combo: "Return".to_string() },
+                                Action::Key {
+                                    combo: "Return".to_string(),
+                                },
                             ]),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
 
+                    plan_state.error = Some("没有可发送内容".to_string());
                     return None;
                 }
 
                 SendMessagePhase::Confirming => {
-                    let found = find_edit_and_send_button(a11y);
-                    let (_, send_btn) = match found {
+                    let found = find_compose_area(a11y);
+                    let send_btn = match found.and_then(|f| f.send_button) {
                         Some(f) => f,
-                        None => return None,
+                        None => {
+                            tracing::warn!(
+                                "[send_message] send button not found while confirming: {}",
+                                summarize_compose_candidates(a11y)
+                            );
+                            plan_state.error = Some("未找到输入框或发送按钮".to_string());
+                            return None;
+                        }
                     };
 
                     let is_disabled = send_btn
@@ -246,18 +331,25 @@ impl Plan for SendMessagePlan {
                         plan_state.phase = SendMessagePhase::Done;
                         return Some(SelectedAction {
                             action: actions::wait_short(),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
 
                     plan_state.confirm_attempts += 1;
                     if plan_state.confirm_attempts >= 5 {
+                        plan_state.error = Some("发送后未确认完成".to_string());
                         return None;
                     }
 
                     return Some(SelectedAction {
                         action: actions::wait_short(),
-                        frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                        frame: identified
+                            .main_window
+                            .as_ref()
+                            .and_then(|m| m.frame.clone()),
                     });
                 }
 

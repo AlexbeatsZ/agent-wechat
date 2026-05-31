@@ -62,8 +62,7 @@ fn migrate_to_encrypted(path: &str, key: &str) -> Result<Connection, String> {
     std::fs::remove_file(path).map_err(|e| format!("Failed to remove old db: {e}"))?;
     std::fs::remove_file(format!("{path}-wal")).ok();
     std::fs::remove_file(format!("{path}-shm")).ok();
-    std::fs::rename(&tmp_path, path)
-        .map_err(|e| format!("Failed to rename encrypted db: {e}"))?;
+    std::fs::rename(&tmp_path, path).map_err(|e| format!("Failed to rename encrypted db: {e}"))?;
 
     tracing::info!("[DB] Migrated unencrypted database to encrypted");
 
@@ -72,8 +71,7 @@ fn migrate_to_encrypted(path: &str, key: &str) -> Result<Connection, String> {
 
 /// Initialize the database: set encryption key, run migrations, set pragmas.
 pub fn init_db() -> Result<(), String> {
-    let db_path =
-        std::env::var("AGENT_DB_PATH").unwrap_or_else(|_| "/data/agent.db".to_string());
+    let db_path = std::env::var("AGENT_DB_PATH").unwrap_or_else(|_| "/data/agent.db".to_string());
 
     // Ensure directory exists
     if let Some(parent) = Path::new(&db_path).parent() {
@@ -106,15 +104,19 @@ pub fn init_db() -> Result<(), String> {
         }
     } else {
         // New DB — just open encrypted
-        open_encrypted(&db_path, key)
-            .map_err(|e| format!("Failed to create encrypted db: {e}"))?
+        open_encrypted(&db_path, key).map_err(|e| format!("Failed to create encrypted db: {e}"))?
     };
 
     // Run migrations (refinery)
     let mut conn = conn;
-    migrations::runner()
-        .run(&mut conn)
-        .map_err(|e| format!("Failed to run migrations: {e}"))?;
+    if let Err(error) = migrations::runner().run(&mut conn) {
+        let message = error.to_string();
+        if message.contains("is different than filesystem one") {
+            tracing::warn!("[DB] Migration checksum differs from this source tree; continuing with existing database schema");
+        } else {
+            return Err(format!("Failed to run migrations: {error}"));
+        }
+    }
 
     DB.set(Mutex::new(conn))
         .map_err(|_| "Database already initialized".to_string())?;

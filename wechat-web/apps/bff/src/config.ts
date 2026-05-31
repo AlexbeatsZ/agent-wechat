@@ -11,6 +11,7 @@ export interface AppConfig {
   cookieSecret: string;
   host: string;
   port: number;
+  logLevel: string;
 }
 
 function boolEnv(value: string | undefined): boolean {
@@ -21,6 +22,17 @@ function resolveTokenFile(value: string | undefined): string {
   if (value && value.trim()) {
     return path.resolve(value);
   }
+
+  let current = process.cwd();
+  while (true) {
+    const candidate = path.join(current, ".agent-wechat-home", ".config", "agent-wechat", "token");
+    if (fs.existsSync(candidate)) return candidate;
+
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
   return path.resolve(process.cwd(), "..", ".agent-wechat-home", ".config", "agent-wechat", "token");
 }
 
@@ -38,7 +50,8 @@ export function loadConfig(): AppConfig {
     simplePassword,
     cookieSecret,
     host: process.env.BFF_HOST?.trim() || "0.0.0.0",
-    port: Number(process.env.BFF_PORT || 8787)
+    port: Number(process.env.BFF_PORT || 8787),
+    logLevel: process.env.BFF_LOG_LEVEL?.trim() || "info"
   };
 }
 

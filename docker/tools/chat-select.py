@@ -480,8 +480,9 @@ def select_by_index(pid, profile, target_index, click_coords, vector_base, vecto
     select_session = profile["SELECT_SESSION"]
     username_off = profile["USERNAME_OFF"]
     elem_size = profile["ELEM_SIZE"]
-    # Register that holds the index argument: x1 on aarch64, rsi on x86_64
-    reg = "x1" if profile.get("ARCH") == "aarch64" else "rsi"
+    # Register that holds the index argument. Linux WeChat x86_64 builds have
+    # moved this between rsi and rdx across minor versions, so patch both.
+    arch = profile.get("ARCH")
 
     log(f"[chat-select] Hooking selectSession, target_index={target_index}")
 
@@ -533,8 +534,15 @@ var hook = Interceptor.attach(addr, {{
     onEnter: function(args) {{
         var orig = args[1].toInt32();
         console.log("REDIRECT " + orig + " -> " + TARGET + " (" + readFilteredUsername(TARGET) + ")");
-        args[1] = ptr(TARGET);
-        this.context.{reg} = TARGET;
+        if ("{arch}" === "aarch64") {{
+            args[1] = ptr(TARGET);
+            this.context.x1 = TARGET;
+        }} else {{
+            args[1] = ptr(TARGET);
+            args[2] = ptr(TARGET);
+            this.context.rsi = TARGET;
+            this.context.rdx = TARGET;
+        }}
     }},
     onLeave: function(retval) {{
         // Detach after selectSession returns so the prologue is restored
@@ -571,7 +579,19 @@ var hook = Interceptor.attach(addr, {{
     redirected = any("REDIRECT" in l for l in lines)
     if not redirected:
         log(f"[chat-select] No REDIRECT seen in hook output. All lines: {lines}")
-    return redirected
+    if not redirected:
+        return False
+
+    # Verify after the hook detaches. The hook can fire on some builds without
+    # changing the selected session if the index argument register changed.
+    try:
+        sessions, _, _, current_sel = enumerate_sessions(pid, profile)
+        if current_sel:
+            log(f"[chat-select] Selection after hook: {current_sel}")
+            return current_sel in sessions and sessions.get(current_sel) == target_index
+    except Exception as exc:
+        log(f"[chat-select] Selection verification failed: {exc}")
+    return True
 
 
 def main():

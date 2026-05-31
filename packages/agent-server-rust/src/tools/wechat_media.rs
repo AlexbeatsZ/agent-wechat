@@ -6,7 +6,7 @@ use crate::tools::wechat_messages::{
 use md5::{Digest, Md5};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// WeChat .dat file magic bytes: 07 08 56 32 08 07
@@ -869,13 +869,25 @@ fn get_voice_data(
 
 // ── File attachment ──────────────────────────────────────────────────────────
 
-fn get_file_attachment(
-    account_dir: &str,
-    content: &str,
-    create_time: i64,
-    local_id: i64,
-) -> MediaResult {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileAttachmentMetadata {
+    filename: String,
+    ext: String,
+    total_len: Option<u64>,
+}
+
+fn basic_xml_unescape(value: &str) -> String {
+    value
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+}
+
+fn parse_file_attachment_metadata(content: &str, local_id: i64) -> FileAttachmentMetadata {
     let filename = extract_xml_tag(content, "title")
+        .map(|s| basic_xml_unescape(&s))
         .or_else(|| {
             let plain = content.trim();
             if plain.is_empty() || plain.starts_with('<') {
@@ -892,36 +904,180 @@ fn get_file_attachment(
             .unwrap_or_default()
             .to_string()
     });
+    let total_len = extract_xml_tag(content, "totallen").and_then(|s| s.parse::<u64>().ok());
 
-    // Files are stored at <account>/msg/file/YYYY-MM/<filename>
+    FileAttachmentMetadata {
+        filename,
+        ext,
+        total_len,
+    }
+}
+
+fn file_size_matches(path: &Path, expected: Option<u64>) -> bool {
+    match expected {
+        Some(size) => path.metadata().map(|m| m.len() == size).unwrap_or(false),
+        None => true,
+    }
+}
+
+fn same_extension(path: &Path, ext: &str) -> bool {
+    if ext.is_empty() {
+        return true;
+    }
+    path.extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case(ext.trim_start_matches('.')))
+        .unwrap_or(false)
+}
+
+fn file_magic_matches_ext(path: &Path, ext: &str) -> bool {
+    let ext = ext.trim_start_matches('.').to_ascii_lowercase();
+    if ext.is_empty() {
+        return false;
+    }
+
+    let Ok(head) = fs::read(path).map(|data| data.into_iter().take(16).collect::<Vec<_>>()) else {
+        return false;
+    };
+
+    match ext.as_str() {
+        "pdf" => head.starts_with(b"%PDF-"),
+        "zip" | "docx" | "xlsx" | "pptx" => head.starts_with(b"PK\x03\x04"),
+        "jpg" | "jpeg" => head.starts_with(&[0xff, 0xd8]),
+        "png" => head.starts_with(&[0x89, b'P', b'N', b'G']),
+        _ => false,
+    }
+}
+
+fn find_file_in_dir(dir: &Path, meta: &FileAttachmentMetadata) -> Option<PathBuf> {
+    if !dir.exists() {
+        return None;
+    }
+
+    let exact = dir.join(&meta.filename);
+    if exact.exists() && file_size_matches(&exact, meta.total_len) {
+        return Some(exact);
+    }
+
+    let entries = fs::read_dir(dir).ok()?;
+    let mut best_ext_match: Option<PathBuf> = None;
+    let mut magic_matches: Vec<(PathBuf, u64, Option<std::time::SystemTime>)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if !file_size_matches(&path, meta.total_len) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.eq_ignore_ascii_case(&meta.filename) {
+            return Some(path);
+        }
+        if same_extension(&path, &meta.ext) {
+            if best_ext_match.is_none() {
+                if meta.total_len.is_some() {
+                    best_ext_match = Some(path.clone());
+                }
+            }
+            if name.contains(&meta.filename) || meta.filename.contains(name.as_str()) {
+                return Some(path);
+            }
+        }
+
+        if !same_extension(&path, &meta.ext) && file_magic_matches_ext(&path, &meta.ext) {
+            let metadata = path.metadata().ok();
+            magic_matches.push((
+                path,
+                metadata.as_ref().map(|m| m.len()).unwrap_or(0),
+                metadata.and_then(|m| m.modified().ok()),
+            ));
+        }
+    }
+
+    if let Some(path) = best_ext_match {
+        return Some(path);
+    }
+
+    if magic_matches.len() == 1 {
+        return magic_matches.pop().map(|(path, _, _)| path);
+    }
+
+    // WeChat can save duplicate sends as extensionless files with generated names
+    // such as "2026-05(1)". If all magic matches are the same size and mtime,
+    // any one of them is equivalent for download purposes.
+    let first = magic_matches.first().cloned();
+    if let Some((first_path, first_size, first_mtime)) = first {
+        if magic_matches
+            .iter()
+            .all(|(_, size, mtime)| *size == first_size && *mtime == first_mtime)
+        {
+            return Some(first_path);
+        }
+    }
+
+    None
+}
+
+fn find_file_attachment_path(
+    account_dir: &str,
+    create_time: i64,
+    meta: &FileAttachmentMetadata,
+) -> Option<PathBuf> {
     let dt = chrono::DateTime::from_timestamp(create_time, 0);
     let year_month = dt
         .map(|d| d.format("%Y-%m").to_string())
         .unwrap_or_default();
 
+    // Files are stored at <account>/msg/file/YYYY-MM/<filename>
     for base in &account_base_paths(account_dir) {
-        let file_path = Path::new(base)
-            .join("msg/file")
-            .join(&year_month)
-            .join(&filename);
-        if file_path.exists() {
-            if let Ok(data) = fs::read(&file_path) {
-                return MediaResult {
-                    media_type: "file".into(),
-                    data: Some(base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        &data,
-                    )),
-                    url: None,
-                    format: ext,
-                    filename,
-                };
+        let file_root = Path::new(base).join("msg/file");
+        let mut candidate_dirs = Vec::new();
+        if !year_month.is_empty() {
+            candidate_dirs.push(file_root.join(&year_month));
+        }
+        candidate_dirs.push(file_root);
+
+        for dir in candidate_dirs {
+            if let Some(path) = find_file_in_dir(&dir, meta) {
+                return Some(path);
             }
+        }
+    }
+    None
+}
+
+fn get_file_attachment(
+    account_dir: &str,
+    content: &str,
+    create_time: i64,
+    local_id: i64,
+) -> MediaResult {
+    let meta = parse_file_attachment_metadata(content, local_id);
+
+    if let Some(file_path) = find_file_attachment_path(account_dir, create_time, &meta) {
+        if let Ok(data) = fs::read(&file_path) {
+            return MediaResult {
+                media_type: "file".into(),
+                data: Some(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data,
+                )),
+                url: None,
+                format: meta.ext,
+                filename: meta.filename,
+            };
         }
     }
 
     // File not yet downloaded by WeChat
-    pending()
+    MediaResult {
+        media_type: "pending".into(),
+        data: None,
+        url: None,
+        format: meta.ext,
+        filename: meta.filename,
+    }
 }
 
 fn looks_like_file_attachment(content: &str) -> bool {
@@ -1050,5 +1206,55 @@ pub fn get_message_media(
             }
             unsupported()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_file_attachment_metadata_from_appmsg_xml() {
+        let content = r#"
+            <msg>
+              <appmsg>
+                <title><![CDATA[报告&amp;数据.pdf]]></title>
+                <type>6</type>
+                <appattach>
+                  <totallen>12345</totallen>
+                  <fileext>pdf</fileext>
+                </appattach>
+              </appmsg>
+            </msg>
+        "#;
+
+        let meta = parse_file_attachment_metadata(content, 42);
+        assert_eq!(meta.filename, "报告&数据.pdf");
+        assert_eq!(meta.ext, "pdf");
+        assert_eq!(meta.total_len, Some(12345));
+    }
+
+    #[test]
+    fn parses_plain_filename_attachment_metadata() {
+        let meta = parse_file_attachment_metadata("sample.xlsx", 7);
+        assert_eq!(meta.filename, "sample.xlsx");
+        assert_eq!(meta.ext, "xlsx");
+        assert_eq!(meta.total_len, None);
+    }
+
+    #[test]
+    fn finds_attachment_by_size_and_extension_when_name_differs() {
+        let temp = tempfile::tempdir().unwrap();
+        let expected = temp.path().join("renamed.pdf");
+        fs::write(&expected, b"payload").unwrap();
+        fs::write(temp.path().join("other.pdf"), b"different").unwrap();
+
+        let meta = FileAttachmentMetadata {
+            filename: "original.pdf".to_string(),
+            ext: "pdf".to_string(),
+            total_len: Some(7),
+        };
+
+        assert_eq!(find_file_in_dir(temp.path(), &meta), Some(expected));
     }
 }

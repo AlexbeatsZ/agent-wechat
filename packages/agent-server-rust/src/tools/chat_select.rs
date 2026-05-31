@@ -1,4 +1,5 @@
 use super::exec::{exec_command, ExecOptions};
+use crate::sessions::manager::get_session;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +19,7 @@ pub struct OpenChatResult {
 ///
 /// Args format: chat-select [--force] [--click-xy X Y] <username>
 pub async fn open_chat(
+    session_id: &str,
     chat_id: &str,
     force: bool,
     click_xy: Option<(f64, f64)>,
@@ -39,12 +41,15 @@ pub async fn open_chat(
 
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let result = exec_command(
-        "chat-select",
-        &args_ref,
-        &ExecOptions::default(),
-    )
-    .await;
+    let exec_options = get_session(session_id)
+        .or_else(|| get_session("default"))
+        .map(|session| ExecOptions {
+            session: Some(session),
+            timeout_ms: 60_000,
+        })
+        .unwrap_or_default();
+
+    let result = exec_command("chat-select", &args_ref, &exec_options).await;
 
     // Result JSON is on stdout regardless of exit code
     if let Ok(parsed) = serde_json::from_str::<OpenChatResult>(&result.stdout) {

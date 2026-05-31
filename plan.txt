@@ -1,0 +1,265 @@
+请基于agent-wechat 为我开发一个“非串流网页版微信前端”。
+
+目标：
+- 不修改 agent-wechat 底层源码，先把它当作外部 WeChat adapter。
+- 构建一个独立项目 wechat-web。
+- 前端不直接访问 agent-wechat，不暴露 agent-wechat token。
+- 浏览器只访问我自己的 BFF 后端。
+- BFF 后端再调用 agent-wechat REST API。
+
+背景：
+- agent-wechat 默认 REST API 地址：http://127.0.0.1:6174
+- agent-wechat 需要 Bearer token。
+- token 位于 ~/.config/agent-wechat/token。
+- agent-wechat API 能力包括：
+  - GET /api/auth/status
+  - WS /api/ws/login
+  - GET /api/chats
+  - GET /api/chats/:id
+  - POST /api/chats/:id/open
+  - GET /api/messages/:chatId
+  - POST /api/messages/send
+  - GET /api/messages/:chatId/media/:localId
+  - GET /api/contacts
+  - GET /api/screenshot
+  - GET /api/a11y
+
+请按以下方式实现：
+
+一、项目结构
+创建 monorepo：
+
+wechat-web/
+  apps/
+    web/
+    bff/
+  packages/
+    shared/
+  docker-compose.yml
+  .env.example
+  README.md
+
+技术栈：
+- apps/web: React + TypeScript + Vite
+- apps/bff: Node.js 22 + Fastify + TypeScript
+- packages/shared: Zod schemas + TypeScript types
+- 包管理器：pnpm
+- 不要使用复杂数据库，第一版先用内存缓存；预留 SQLite 接口即可。
+
+二、BFF 后端功能
+实现以下 BFF API：
+
+1. GET /api/status
+- 代理到 agent-wechat 的 GET /api/auth/status
+- 返回登录状态、agent 可达性、最后检测时间。
+
+2. GET /api/chats?limit=&offset=
+- 代理到 GET /api/chats
+- 做基本字段归一化：
+  - id
+  - displayName
+  - avatarUrl 可为空
+  - lastMessagePreview
+  - lastMessageTime
+  - unreadCount
+  - isGroup
+  - raw
+
+3. GET /api/chats/:chatId/messages?limit=&offset=
+- 代理到 GET /api/messages/:chatId
+- 归一化消息字段：
+  - id
+  - localId
+  - chatId
+  - senderName
+  - senderId
+  - direction: "in" | "out" | "unknown"
+  - type: "text" | "image" | "file" | "voice" | "video" | "unknown"
+  - text
+  - timestamp
+  - mediaLocalId
+  - fileName
+  - fileSize
+  - raw
+
+4. GET /api/chats/:chatId/media/:localId
+- 代理到 GET /api/messages/:chatId/media/:localId
+- 保持 Content-Type / Content-Disposition
+- 支持图片预览和文件下载。
+
+5. POST /api/chats/:chatId/send
+请求体：
+{
+  "text": "..."
+}
+- 调用 agent-wechat 的 POST /api/messages/send
+- 发送后不要盲信成功，重新拉取该聊天最新消息，尝试确认是否出现自己发送的文本。
+- 返回：
+{
+  "ok": true/false,
+  "status": "sent" | "uncertain" | "failed",
+  "error": "...",
+  "raw": ...
+}
+
+6. GET /api/screenshot
+- 调试用，代理 GET /api/screenshot。
+- 需要后端环境变量 ENABLE_DEBUG_API=true 才开放。
+
+7. GET /api/a11y
+- 调试用，代理 GET /api/a11y。
+- 需要 ENABLE_DEBUG_API=true 才开放。
+
+三、BFF 安全与部署假设
+
+本项目是个人自用项目，不部署到公网服务器。
+访问方式是私人设备 + Tailscale 私有网络。
+因此不要引入过重的公网 SaaS 安全体系。
+
+基本要求：
+
+1. agent-wechat token 仍然只能由 BFF 后端读取。
+   - 前端不得出现 agent-wechat token。
+   - 浏览器网络请求中不得出现 agent-wechat token。
+
+2. BFF 通过环境变量读取：
+   - AGENT_WECHAT_BASE_URL=http://127.0.0.1:6174
+   - AGENT_WECHAT_TOKEN_FILE=/home/user/.config/agent-wechat/token
+   - ENABLE_DEBUG_API=false
+   - BFF_SIMPLE_PASSWORD 可选
+
+3. 第一版可以不做复杂用户系统。
+   可选实现一个简单访问密码：
+   - 如果 BFF_SIMPLE_PASSWORD 为空，则不启用密码。
+   - 如果 BFF_SIMPLE_PASSWORD 非空，则访问 Web UI 前需要输入密码。
+   - 登录态可以先用简单 session cookie。
+   - 不需要 OAuth、数据库用户表、权限分级。
+
+4. 默认部署假设：
+   - agent-wechat 只监听 127.0.0.1。
+   - BFF/Web 可以监听 0.0.0.0，供 Tailscale 设备访问。
+   - 不面向公网暴露。
+   - 不设计多用户、多租户、审计系统。
+
+5. 保留最低限度防误用：
+   - 禁止把 AGENT_WECHAT_TOKEN 返回给前端。
+   - 禁止前端直接请求 agent-wechat。
+   - DEBUG API 默认关闭。
+   - /api/screenshot 和 /api/a11y 只有 ENABLE_DEBUG_API=true 时开放。 
+
+四、前端页面
+实现一个简洁的三栏布局：
+
+左栏：
+- 登录状态
+- 刷新按钮
+- 聊天搜索框
+- 聊天列表
+- 显示 unreadCount 和 lastMessagePreview
+
+中栏：
+- 当前聊天标题
+- 消息列表
+- 消息气泡区分自己和对方
+- 支持 text/image/file/voice/video/unknown 的基本渲染
+- 图片点击打开预览
+- 文件点击下载
+- unknown 类型显示 raw JSON 折叠块
+
+底栏：
+- 文本输入框
+- Enter 发送，Shift+Enter 换行
+- 发送中状态
+- 发送失败显示重试按钮
+
+右栏或弹窗：
+- 当前 raw message 调试查看器
+- 只在 dev 模式显示
+
+五、刷新策略
+第一版不要过度依赖 WebSocket。
+实现 polling：
+- 聊天列表：每 10 秒刷新一次。
+- 当前聊天：窗口聚焦时每 2 秒刷新一次；窗口失焦时每 10 秒刷新一次。
+- 用户滚动到历史消息时不要强制滚到底部。
+- 新消息到来时，如果用户当前接近底部，自动滚到底部；否则显示“有新消息”按钮。
+
+六、错误处理
+必须处理：
+- agent-wechat 不可达
+- token 缺失
+- 401 Unauthorized
+- 微信未登录
+- 消息发送失败
+- 媒体下载失败
+- 消息字段不符合预期
+
+所有错误都要在 UI 上可见，不要只写 console.log。
+
+七、测试
+实现：
+- BFF 单元测试：mock agent-wechat API。
+- 前端基础测试：聊天列表渲染、消息渲染、发送失败状态。
+- 提供一个 mock 模式：
+  - AGENT_WECHAT_MOCK=true
+  - 不连接真实 agent-wechat
+  - 返回固定 chats/messages/media 示例，方便无微信环境开发 UI。
+
+八、README
+写清楚：
+1. 如何启动 agent-wechat：
+   npm install -g @agent-wechat/cli
+   wx up
+   wx auth login
+
+2. 如何启动本项目：
+   pnpm install
+   cp .env.example .env
+   pnpm dev
+
+3. 环境变量说明。
+4. 安全警告：
+   - 不要公网暴露 agent-wechat:6174
+   - 不要把 token 交给浏览器
+   - 推荐 Tailscale/WireGuard/ZeroTier 内网访问
+   - 这个项目只用于个人自用，不做群发/营销/自动加人
+
+九、开发顺序
+请严格按阶段开发，不要一口气做复杂功能：
+
+Phase 1:
+- 建立 monorepo
+- BFF 能读取 token
+- BFF /api/status 可用
+- 前端显示登录状态
+
+Phase 2:
+- BFF /api/chats
+- 前端聊天列表
+
+Phase 3:
+- BFF /api/chats/:chatId/messages
+- 前端消息流
+
+Phase 4:
+- BFF /api/chats/:chatId/media/:localId
+- 图片预览和文件下载
+
+Phase 5:
+- POST /api/chats/:chatId/send
+- 前端文本发送、失败重试
+
+Phase 6:
+- mock 模式、测试、README、docker-compose
+
+十、验收标准
+- pnpm install 成功
+- pnpm dev 能同时启动 web 和 bff
+- AGENT_WECHAT_MOCK=true 时，无需微信也能看到 mock 聊天列表和消息
+- 真实 agent-wechat 运行时，能看到真实 chats
+- 能读取指定 chat 的 messages
+- 能下载媒体
+- 能发送文本
+- 浏览器源代码和网络请求中不得出现 AGENT_WECHAT_TOKEN
+- 代码有清晰类型定义，不允许大量 any
+- 所有失败状态在 UI 可见

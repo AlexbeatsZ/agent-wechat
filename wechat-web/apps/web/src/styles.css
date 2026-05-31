@@ -2,11 +2,34 @@
   box-sizing: border-box;
 }
 
+:root {
+  color-scheme: light dark;
+  --bg: #eef1f4;
+  --panel: #f8fafb;
+  --surface: #ffffff;
+  --surface-muted: #dfe4e8;
+  --border: #d9e0e7;
+  --border-strong: #cbd5df;
+  --text: #17202a;
+  --muted: #667085;
+  --accent: #17875d;
+  --accent-soft: #e8f3ee;
+  --outgoing: #d9f2c7;
+  --outgoing-border: #c5e8ae;
+  --link: #164f92;
+  --danger-bg: #fff1f1;
+  --danger-border: #f3b5b5;
+  --danger: #9f1d1d;
+  --info-bg: #eef7ff;
+  --info-border: #b9d9f5;
+  --info: #17466d;
+}
+
 body {
   margin: 0;
   font-family: Inter, "Segoe UI", system-ui, sans-serif;
-  color: #17202a;
-  background: #eef1f4;
+  color: var(--text);
+  background: var(--bg);
 }
 
 button,
@@ -27,8 +50,8 @@ button {
 }
 
 .sidebar {
-  background: #f8fafb;
-  border-right: 1px solid #d9e0e7;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
   min-width: 0;
   min-height: 0;
 }
@@ -38,7 +61,7 @@ button {
   align-items: center;
   gap: 8px;
   padding: 14px;
-  border-bottom: 1px solid #d9e0e7;
+  border-bottom: 1px solid var(--border);
 }
 
 .status-line div {
@@ -56,16 +79,35 @@ button {
   white-space: nowrap;
 }
 
+.chat-item strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-item small {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
 .status-line span {
-  color: #667085;
+  color: var(--muted);
   font-size: 13px;
 }
 
 .status-line button,
 .composer button,
-.send-error button {
+.send-error button,
+.send-info button,
+.files-toolbar button {
   border: 1px solid #cbd5df;
-  background: #ffffff;
+  background: var(--surface);
+  color: var(--text);
   border-radius: 6px;
   min-height: 36px;
   padding: 0 10px;
@@ -75,14 +117,26 @@ button {
 }
 
 .error-banner,
-.send-error {
+.send-error,
+.send-info {
   margin: 10px 14px;
   padding: 10px;
-  border: 1px solid #f3b5b5;
-  background: #fff1f1;
-  color: #9f1d1d;
   border-radius: 6px;
   font-size: 13px;
+}
+
+.error-banner,
+.send-error {
+  border: 1px solid #f3b5b5;
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+.send-info {
+  border: 1px solid var(--info-border);
+  background: var(--info-bg);
+  color: var(--info);
 }
 
 .search {
@@ -93,8 +147,9 @@ button {
   gap: 8px;
   padding: 0 10px;
   border: 1px solid #cbd5df;
+  border-color: var(--border-strong);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .search input {
@@ -102,11 +157,192 @@ button {
   outline: 0;
   width: 100%;
   min-width: 0;
+  color: var(--text);
+  background: transparent;
 }
 
 .chat-list {
   overflow: auto;
-  height: calc(100vh - 124px);
+  height: calc(100vh - 176px);
+}
+
+.files-toolbar {
+  display: flex;
+  gap: 8px;
+  margin: 0 14px 10px;
+}
+
+.files-toolbar button:first-child {
+  flex: 1;
+  justify-content: center;
+}
+
+.server-files {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0 14px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.file-manager-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 17, 24, 0.46);
+}
+
+.file-manager {
+  width: min(880px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.file-manager header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.file-manager h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.file-manager header span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.file-manager header > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-manager-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-manager-actions select,
+.file-manager-actions button,
+.file-table-row a,
+.file-table-row button {
+  min-height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.file-manager-actions select {
+  padding: 0 8px;
+}
+
+.file-manager-actions button,
+.file-table-row a,
+.file-table-row button {
+  width: 36px;
+  display: grid;
+  place-items: center;
+}
+
+.file-table {
+  overflow: auto;
+}
+
+.file-table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.file-table-row:last-child {
+  border-bottom: 0;
+}
+
+.file-table-row div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.file-table-row strong,
+.file-table-row span,
+.file-table-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-table-row span,
+.file-table-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.file-table-row a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.file-table-row button {
+  color: var(--danger);
+}
+
+.server-file {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.server-file:last-child {
+  border-bottom: 0;
+}
+
+.server-file strong,
+.server-file span,
+.server-file small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-file span,
+.server-file small,
+.file-empty,
+.mini-error {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.file-empty,
+.mini-error {
+  padding: 10px;
+}
+
+.mini-error {
+  color: var(--danger);
 }
 
 .chat-item {
@@ -116,13 +352,14 @@ button {
   gap: 10px;
   padding: 12px 14px;
   border: 0;
-  border-bottom: 1px solid #e5eaf0;
+  border-bottom: 1px solid var(--border);
   background: transparent;
+  color: var(--text);
   text-align: left;
 }
 
 .chat-item.active {
-  background: #e8f3ee;
+  background: var(--accent-soft);
 }
 
 .chat-item div {
@@ -132,7 +369,7 @@ button {
 
 .chat-item span {
   margin-top: 4px;
-  color: #667085;
+  color: var(--muted);
   font-size: 13px;
 }
 
@@ -155,14 +392,14 @@ button {
   height: 100vh;
   min-width: 0;
   min-height: 0;
-  background: #edf0f2;
+  background: var(--bg);
   overflow: hidden;
 }
 
 .conversation header {
   padding: 10px 18px;
-  background: #f8fafb;
-  border-bottom: 1px solid #d9e0e7;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
 }
 
 .conversation h2 {
@@ -171,7 +408,7 @@ button {
 }
 
 .conversation header span {
-  color: #667085;
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -198,7 +435,7 @@ button {
   display: grid;
   justify-items: center;
   gap: 4px;
-  color: #667085;
+  color: var(--muted);
   font-size: 13px;
   text-align: center;
 }
@@ -206,7 +443,7 @@ button {
 .system-message span {
   padding: 6px 10px;
   border-radius: 6px;
-  background: #dfe4e8;
+  background: var(--surface-muted);
 }
 
 .system-message time {
@@ -215,7 +452,7 @@ button {
 
 .message-row time,
 .message-meta {
-  color: #667085;
+  color: var(--muted);
   font-size: 12px;
   margin-bottom: 4px;
 }
@@ -229,14 +466,14 @@ button {
   position: relative;
   border-radius: 7px;
   padding: 10px 12px;
-  background: #ffffff;
-  border: 1px solid #d9e0e7;
+  background: var(--surface);
+  border: 1px solid var(--border);
   overflow-wrap: anywhere;
 }
 
 .out .bubble {
-  background: #d9f2c7;
-  border-color: #c5e8ae;
+  background: var(--outgoing);
+  border-color: var(--outgoing-border);
 }
 
 .message-text {
@@ -298,13 +535,13 @@ button {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #164f92;
+  color: var(--link);
   text-decoration: none;
   cursor: pointer;
 }
 
 .media-unavailable {
-  color: #667085;
+  color: var(--muted);
 }
 
 .bubble pre {
@@ -319,34 +556,85 @@ button {
   right: 4px;
   border: 0;
   background: transparent;
-  color: #667085;
+  color: var(--muted);
 }
 
 .composer {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
   padding: 12px;
-  background: #f8fafb;
-  border-top: 1px solid #d9e0e7;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
 }
 
 .composer textarea {
   min-height: 46px;
   max-height: 130px;
   resize: vertical;
-  border: 1px solid #cbd5df;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
   border-radius: 6px;
   padding: 10px;
   outline: 0;
 }
 
 .composer button {
-  background: #17875d;
+  background: var(--accent);
   color: #fff;
-  border-color: #17875d;
+  border-color: var(--accent);
   padding: 0 16px;
+}
+
+.attach-control {
+  position: relative;
+  align-self: end;
+}
+
+.composer .attach-button {
+  width: 40px;
+  padding: 0;
+  justify-content: center;
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.attach-menu {
+  position: absolute;
+  left: 0;
+  bottom: 48px;
+  z-index: 8;
+  min-width: 136px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+}
+
+.attach-menu button {
+  justify-content: flex-start;
+  min-height: 34px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+}
+
+.hidden-input {
+  display: none;
+}
+
+.readonly-hint {
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .composer button:disabled {
@@ -360,7 +648,9 @@ button {
   left: 50%;
   transform: translateX(-50%);
   border: 1px solid #cbd5df;
-  background: #ffffff;
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
   border-radius: 16px;
   padding: 6px 14px;
 }
@@ -371,7 +661,7 @@ button {
   z-index: 10;
   display: grid;
   place-items: center;
-  background: rgba(238, 241, 244, 0.92);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
 }
 
 .login-panel {
@@ -379,8 +669,8 @@ button {
   display: grid;
   gap: 12px;
   padding: 20px;
-  background: #ffffff;
-  border: 1px solid #d9e0e7;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
 }
 
@@ -388,8 +678,113 @@ button {
 .login-panel button {
   height: 40px;
   border-radius: 6px;
-  border: 1px solid #cbd5df;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
   padding: 0 10px;
+}
+
+.wechat-login-card {
+  margin: 12px 14px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.wechat-login-card button,
+.empty-state button {
+  min-height: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.wechat-login-card button:first-child,
+.empty-state button:first-child {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.wechat-login-card button:disabled,
+.empty-state button:disabled,
+.file-link:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.wechat-login-card span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.wechat-login-card img,
+.empty-state img {
+  width: 180px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  justify-self: center;
+}
+
+.empty-state {
+  align-self: center;
+  justify-self: center;
+  width: min(420px, calc(100% - 32px));
+  margin: auto;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  text-align: center;
+  color: var(--muted);
+}
+
+.empty-state h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 20px;
+}
+
+.empty-state p {
+  margin: 0;
+}
+
+.empty-state div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418;
+    --panel: #171b20;
+    --surface: #1f252b;
+    --surface-muted: #2a3138;
+    --border: #313942;
+    --border-strong: #46515d;
+    --text: #e8edf2;
+    --muted: #9aa5b1;
+    --accent: #27a474;
+    --accent-soft: #183329;
+    --outgoing: #21432f;
+    --outgoing-border: #2d5a40;
+    --link: #8abdf6;
+    --danger-bg: #321d22;
+    --danger-border: #6a3038;
+    --danger: #ffb3bd;
+  }
 }
 
 @media (max-width: 980px) {

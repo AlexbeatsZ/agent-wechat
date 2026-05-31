@@ -9,7 +9,6 @@ use axum::{
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use base64::Engine;
 use crate::context::create_context;
 use crate::db::get_db;
 use crate::execution::run_execution_loop;
@@ -22,6 +21,7 @@ use crate::tools::a11y::get_a11y_desktop;
 use crate::tools::exec::ExecOptions;
 use crate::tools::qr::{decode_qr_from_base64, to_data_url};
 use crate::tools::screenshot::capture_screenshot;
+use base64::Engine;
 
 pub async fn get_status() -> Json<serde_json::Value> {
     Json(serde_json::json!({
@@ -70,10 +70,19 @@ pub async fn auth_status() -> Json<serde_json::Value> {
         }
     };
 
-    let screenshot = capture_screenshot(&exec_options)
-        .await
-        .unwrap_or_default();
+    let screenshot = capture_screenshot(&exec_options).await.unwrap_or_default();
     let identified = identify_states(&a11y, &screenshot);
+    if identified.main_window.is_none() {
+        tracing::warn!(
+            "[auth_status] WeChat process is running but no main window state was identified"
+        );
+        return Json(serde_json::json!({
+            "status": "ui_unavailable",
+            "loggedInUser": session.logged_in_user,
+            "automationReady": false,
+            "error": "WeChat UI is not exposing a usable accessibility tree"
+        }));
+    }
 
     // Load persisted state and apply reduce
     let mut context = {
@@ -103,7 +112,13 @@ pub async fn auth_status() -> Json<serde_json::Value> {
     let status = if context.state.main_window.is_logged_in {
         "logged_in"
     } else {
-        "logged_out"
+        match context.state.main_window.view {
+            MainWindowView::LoginPhoneConfirm => "phone_confirm",
+            MainWindowView::LoginQr => "qr_pending",
+            MainWindowView::LoginAccount => "login_account",
+            MainWindowView::LoginLoading => "login_loading",
+            _ => "logged_out",
+        }
     };
 
     tracing::info!(
@@ -114,7 +129,8 @@ pub async fn auth_status() -> Json<serde_json::Value> {
 
     Json(serde_json::json!({
         "status": status,
-        "loggedInUser": session.logged_in_user,
+        "loggedInUser": if status == "logged_in" { session.logged_in_user } else { None },
+        "automationReady": true,
     }))
 }
 
@@ -279,7 +295,9 @@ async fn handle_login_ws(mut socket: WebSocket, params: LoginWsParams) {
         let emit = move |event: SubscriptionEvent| {
             let _ = tx.send(event);
         };
-        run_execution_loop(&plan, &login_params, &mut context, &emit, cancel_for_exec).await.0
+        run_execution_loop(&plan, &login_params, &mut context, &emit, cancel_for_exec)
+            .await
+            .0
     });
 
     // Main loop: bridge events to WebSocket, handle timeout + disconnect
@@ -335,7 +353,9 @@ async fn handle_login_ws(mut socket: WebSocket, params: LoginWsParams) {
     let exec_result = exec_handle.await.ok();
     if !client_disconnected && !sent_terminal {
         let fallback = match exec_result {
-            Some(result) if result.success => LoginSubscriptionEvent::LoginSuccess { user_id: None },
+            Some(result) if result.success => {
+                LoginSubscriptionEvent::LoginSuccess { user_id: None }
+            }
             Some(result) => {
                 let message = result.error.unwrap_or_else(|| "Login failed".to_string());
                 if message.starts_with("Unknown state for")

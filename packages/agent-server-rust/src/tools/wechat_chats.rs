@@ -78,7 +78,11 @@ pub fn list_chats(
             let is_group = username.contains("@chatroom");
 
             let name = contact
-                .and_then(|c| c.get("remark").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+                .and_then(|c| {
+                    c.get("remark")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                })
                 .or_else(|| {
                     contact.and_then(|c| {
                         c.get("nick_name")
@@ -90,13 +94,19 @@ pub fn list_chats(
                 .to_string();
 
             let remark = contact
-                .and_then(|c| c.get("remark").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+                .and_then(|c| {
+                    c.get("remark")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                })
                 .map(String::from);
 
             let unread_count = session
                 .get("unread_count")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0) as i32;
+            let local_type = contact.and_then(|c| c.get("local_type").and_then(|v| v.as_i64()));
+            let session_type = session.get("type").and_then(|v| v.as_i64());
 
             let last_message_preview = session
                 .get("summary")
@@ -126,9 +136,7 @@ pub fn list_chats(
                         .unwrap_or_default()
                 });
 
-            let last_msg_local_id = session
-                .get("last_msg_locald_id")
-                .and_then(|v| v.as_i64());
+            let last_msg_local_id = session.get("last_msg_locald_id").and_then(|v| v.as_i64());
 
             Some(Chat {
                 id: username.clone(),
@@ -137,6 +145,8 @@ pub fn list_chats(
                 remark,
                 unread_count,
                 is_group,
+                local_type,
+                session_type,
                 last_message_preview,
                 last_message_sender,
                 last_activity_at,
@@ -187,7 +197,11 @@ pub fn get_chat_by_username(
     let contact = contacts.first();
 
     let name = contact
-        .and_then(|c| c.get("remark").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+        .and_then(|c| {
+            c.get("remark")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
         .or_else(|| {
             contact.and_then(|c| {
                 c.get("nick_name")
@@ -199,13 +213,19 @@ pub fn get_chat_by_username(
         .to_string();
 
     let remark = contact
-        .and_then(|c| c.get("remark").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+        .and_then(|c| {
+            c.get("remark")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
         .map(String::from);
 
     let unread_count = session
         .get("unread_count")
         .and_then(|v| v.as_i64())
         .unwrap_or(0) as i32;
+    let local_type = contact.and_then(|c| c.get("local_type").and_then(|v| v.as_i64()));
+    let session_type = session.get("type").and_then(|v| v.as_i64());
 
     Some(Chat {
         id: username.to_string(),
@@ -214,6 +234,8 @@ pub fn get_chat_by_username(
         remark,
         unread_count,
         is_group,
+        local_type,
+        session_type,
         last_message_preview: session
             .get("summary")
             .and_then(|v| v.as_str())
@@ -233,9 +255,7 @@ pub fn get_chat_by_username(
                     .map(|dt| dt.to_rfc3339())
                     .unwrap_or_default()
             }),
-        last_msg_local_id: session
-            .get("last_msg_locald_id")
-            .and_then(|v| v.as_i64()),
+        last_msg_local_id: session.get("last_msg_locald_id").and_then(|v| v.as_i64()),
     })
 }
 
@@ -338,6 +358,8 @@ pub fn find_chats_by_name(
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i32,
                 is_group,
+                local_type: contact.get("local_type").and_then(|v| v.as_i64()),
+                session_type: session.get("type").and_then(|v| v.as_i64()),
                 last_message_preview: session
                     .get("summary")
                     .and_then(|v| v.as_str())
@@ -357,9 +379,7 @@ pub fn find_chats_by_name(
                             .map(|dt| dt.to_rfc3339())
                             .unwrap_or_default()
                     }),
-                last_msg_local_id: session
-                    .get("last_msg_locald_id")
-                    .and_then(|v| v.as_i64()),
+                last_msg_local_id: session.get("last_msg_locald_id").and_then(|v| v.as_i64()),
             })
         })
         .collect()

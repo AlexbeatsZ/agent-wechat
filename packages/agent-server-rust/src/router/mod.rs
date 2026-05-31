@@ -3,6 +3,7 @@ mod chats;
 mod contacts;
 mod debug;
 mod events;
+mod files;
 mod messages;
 mod sessions;
 mod status;
@@ -11,7 +12,7 @@ mod vnc;
 use axum::{
     extract::DefaultBodyLimit,
     http::Method,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use tower_http::cors::{Any, CorsLayer};
@@ -50,12 +51,23 @@ pub fn build_router() -> Router {
             get(messages::get_media),
         )
         .route("/api/messages/send", post(messages::send_message))
+        // Cached files
+        .route("/api/files", get(files::list_files))
+        .route("/api/files/download", get(files::download_file))
+        .route("/api/files/{id}/download", get(files::download_file_by_id))
+        .route("/api/files/delete", delete(files::delete_file))
         // Debug
         .route("/api/debug/screenshot", get(debug::screenshot))
         .route("/api/debug/a11y", get(debug::a11y))
         // Sessions
-        .route("/api/sessions", get(sessions::list_sessions).post(sessions::create_session))
-        .route("/api/sessions/{id}", get(sessions::get_session).delete(sessions::delete_session))
+        .route(
+            "/api/sessions",
+            get(sessions::list_sessions).post(sessions::create_session),
+        )
+        .route(
+            "/api/sessions/{id}",
+            get(sessions::get_session).delete(sessions::delete_session),
+        )
         .route("/api/sessions/{id}/start", post(sessions::start_session))
         .route("/api/sessions/{id}/stop", post(sessions::stop_session))
         // WebSocket for login subscription
