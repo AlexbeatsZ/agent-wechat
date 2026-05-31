@@ -61,6 +61,12 @@ fn find_selected_chat_item(a11y: &A11yNode) -> Option<&A11yNode> {
     })
 }
 
+fn has_open_conversation_pane(a11y: &A11yNode) -> bool {
+    query_selector(a11y, r#"list[name="Messages"]"#).is_some()
+        && (query_selector(a11y, r#"push-button[name="Send(S)"]"#).is_some()
+            || query_selector(a11y, r#"push-button[name="Send"]"#).is_some())
+}
+
 /// Chat state — no chat selected.
 struct ChatState;
 
@@ -79,7 +85,7 @@ impl IAState for ChatState {
                 frame: None,
             });
         }
-        if find_selected_chat_item(args.a11y).is_some() {
+        if find_selected_chat_item(args.a11y).is_some() || has_open_conversation_pane(args.a11y) {
             return Ok(IdentifyResult {
                 identified: false,
                 frame: None,
@@ -125,7 +131,7 @@ impl IAState for ChatOpenState {
                 frame: None,
             });
         }
-        if find_selected_chat_item(args.a11y).is_none() {
+        if find_selected_chat_item(args.a11y).is_none() && !has_open_conversation_pane(args.a11y) {
             return Ok(IdentifyResult {
                 identified: false,
                 frame: None,

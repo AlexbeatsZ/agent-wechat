@@ -171,8 +171,13 @@ def find_chat_item_from_a11y():
             log("[chat-select] No list-item found in Chats list")
             return None
 
-        # Return center of the first item with valid bounds
-        item = items[0]
+        # Prefer a non-selected visible row. Clicking the already-selected row
+        # may not call selectSession(), so the Frida hook never gets a chance
+        # to redirect to the requested target.
+        item = next(
+            (candidate for candidate in items if "SELECTED" not in (candidate.get("states") or [])),
+            items[0],
+        )
         b = item["bounds"]
         cx = b["x"] + b["width"] // 2
         cy = b["y"] + b["height"] // 2
@@ -197,12 +202,12 @@ def _find_chat_list_items(node, items, in_chat_list):
 
     if in_chat_list and role == "list-item" and node.get("bounds"):
         items.append(node)
-        if len(items) >= 1:
+        if len(items) >= 3:
             return  # Only need one
 
     for child in node.get("children", []):
         _find_chat_list_items(child, items, in_chat_list)
-        if len(items) >= 1:
+        if len(items) >= 3:
             return
 
 

@@ -103,7 +103,10 @@ function messageSortValue(timestamp: string | undefined): number {
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const config = options.config;
-  const app = Fastify({ logger: config.logLevel === "silent" ? false : { level: config.logLevel } });
+  const app = Fastify({
+    logger: config.logLevel === "silent" ? false : { level: config.logLevel },
+    routerOptions: { maxParamLength: 512 }
+  });
   const sessions = new Set<string>();
   const agent = options.agent || (config.mock ? new MockAgentClient() : new RealAgentClient(config));
   const diagnostics: DiagnosticEvent[] = [];

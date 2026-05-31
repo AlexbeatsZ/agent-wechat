@@ -34,10 +34,10 @@ pub async fn exec_command(command: &str, args: &[&str], options: &ExecOptions) -
 
     if let Some(session) = &options.session {
         env.insert("DISPLAY".into(), session.display.clone());
-        env.insert(
-            "DBUS_SESSION_BUS_ADDRESS".into(),
-            session.dbus_address.clone().unwrap_or_default(),
-        );
+        // AT-SPI in the WeChat container can return stale UI trees when an old
+        // DBUS_SESSION_BUS_ADDRESS is injected. DISPLAY is enough for the
+        // xdotool/a11y helpers and avoids desynchronizing chat selection.
+        env.remove("DBUS_SESSION_BUS_ADDRESS");
         env.insert("HOME".into(), format!("/home/{}", session.linux_user));
     } else {
         env.entry("DISPLAY".into()).or_insert_with(|| ":99".into());

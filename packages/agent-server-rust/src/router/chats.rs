@@ -185,6 +185,12 @@ pub async fn open_chat(
         }));
     }
 
+    let display_name = session.logged_in_user.as_ref().and_then(|logged_in_user| {
+        let db = get_db();
+        let keys = get_stored_keys(&db, &session.id, logged_in_user);
+        wechat_chats::get_chat_by_username(logged_in_user, &keys, &chat_id).map(|chat| chat.name)
+    });
+
     let mut context = {
         let db = get_db();
         create_context(session, &db)
@@ -194,6 +200,7 @@ pub async fn open_chat(
     let params = ChatOpenParams {
         chat_id,
         clear_unreads,
+        display_name,
     };
     let cancel = CancellationToken::new();
     let noop_emit = |_: SubscriptionEvent| {};

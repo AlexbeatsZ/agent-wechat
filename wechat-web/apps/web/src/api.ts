@@ -24,7 +24,7 @@ export const api = {
   openChat: (chatId: string, clearUnreads = true) => request<unknown>(`/api/chats/${encodeURIComponent(chatId)}/open?clearUnreads=${clearUnreads ? "true" : "false"}`, { method: "POST" }),
   messages: (chatId: string) => request<MessageDto[]>(`/api/chats/${encodeURIComponent(chatId)}/messages?limit=80&offset=0`),
   files: () => request<ServerFileDto[]>("/api/files?limit=100&offset=0&type=all"),
-  fileDownloadUrl: (id: string) => `/api/files/${encodeURIComponent(id)}/download`,
+  fileDownloadUrl: (id: string) => `/api/files/download?id=${encodeURIComponent(id)}`,
   deleteFile: (id: string) => request<{ ok: boolean; error?: string }>(`/api/files?id=${encodeURIComponent(id)}`, { method: "DELETE" }),
   sendText: (chatId: string, text: string) => request<SendResponse>(`/api/chats/${encodeURIComponent(chatId)}/send`, { method: "POST", body: JSON.stringify({ text }) }),
   sendImage: (chatId: string, data: string, mimeType: string) => request<SendResponse>(`/api/chats/${encodeURIComponent(chatId)}/send`, { method: "POST", body: JSON.stringify({ image: { data, mimeType } }) }),

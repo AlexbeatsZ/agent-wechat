@@ -143,18 +143,25 @@ describe("BFF", () => {
   });
 
   it("lists cached server files and downloads by safe id", async () => {
-    const app = await buildApp({ config, agent: agent() });
+    const longSafeId = "MDptc2cvYXR0YWNoLzVmMTRlMzQ1MDNhODVlNmZmMGJjODljMzkwNTdiMjM2LzIwMjYtMDUvSW1nLzMxXzE3ODAxNDk2MzNfdC5kYXQ";
+    const app = await buildApp({
+      config,
+      agent: agent({
+        listFiles: async () => [{ id: longSafeId, filename: "报告.pdf", size: 3, modifiedAt: "2026-01-01T00:00:00.000Z", sourcePathHint: "msg/file/报告.pdf", contentType: "application/pdf" }],
+        downloadFile: async (id) => ({ file: { id, filename: "报告.pdf", size: 3, modifiedAt: "2026-01-01T00:00:00.000Z", sourcePathHint: "msg/file/报告.pdf", contentType: "application/pdf" }, data: Buffer.from("pdf").toString("base64") })
+      })
+    });
     const list = await app.inject({ method: "GET", url: "/api/files?type=all" });
     expect(list.statusCode).toBe(200);
-    expect(list.json()[0]).toMatchObject({ id: "f1", filename: "报告.pdf" });
+    expect(list.json()[0]).toMatchObject({ id: longSafeId, filename: "报告.pdf" });
 
-    const download = await app.inject({ method: "GET", url: "/api/files/download?id=f1" });
+    const download = await app.inject({ method: "GET", url: `/api/files/download?id=${encodeURIComponent(longSafeId)}` });
     expect(download.statusCode).toBe(200);
     expect(download.headers["content-type"]).toContain("application/pdf");
     expect(download.headers["content-disposition"]).toContain("filename*=UTF-8''");
     expect(download.body).toBe("pdf");
 
-    const pathDownload = await app.inject({ method: "GET", url: `/api/files/${encodeURIComponent("f1")}/download` });
+    const pathDownload = await app.inject({ method: "GET", url: `/api/files/${encodeURIComponent(longSafeId)}/download` });
     expect(pathDownload.statusCode).toBe(200);
     expect(pathDownload.headers["content-type"]).toContain("application/pdf");
   });

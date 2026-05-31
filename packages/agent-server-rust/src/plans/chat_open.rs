@@ -10,6 +10,7 @@ pub struct ChatOpenPlan;
 pub struct ChatOpenParams {
     pub chat_id: String,
     pub clear_unreads: bool,
+    pub display_name: Option<String>,
 }
 
 pub struct ChatOpenPlanState {
@@ -89,7 +90,14 @@ impl Plan for ChatOpenPlan {
                     });
 
                     let force = main_state_id == Some("chat");
-                    let result = open_chat(session_id, &params.chat_id, force, click_xy).await;
+                    let result = open_chat(
+                        session_id,
+                        &params.chat_id,
+                        force,
+                        click_xy,
+                        params.display_name.as_deref(),
+                    )
+                    .await;
 
                     if !result.ok {
                         plan_state.result = Some(result);

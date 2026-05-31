@@ -91,7 +91,7 @@ impl Plan for FileDownloadPlan {
                     return None;
                 }
 
-                let result = open_chat(session_id, &params.chat_id, false, None).await;
+                let result = open_chat(session_id, &params.chat_id, false, None, None).await;
                 if !result.ok {
                     plan_state.result = Some(result);
                     plan_state.phase = FileDownloadPhase::Done;

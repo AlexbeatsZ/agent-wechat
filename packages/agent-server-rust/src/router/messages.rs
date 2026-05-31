@@ -12,6 +12,7 @@ use crate::ia::types::{MediaResult, Message, SendResult, SubscriptionEvent};
 use crate::plans::file_download::{FileDownloadParams, FileDownloadPlan};
 use crate::plans::send_message::{SendMessageParams, SendMessagePlan};
 use crate::sessions::manager::get_session;
+use crate::tools::wechat_chats;
 use crate::tools::wechat_db::{find_wechat_pid, list_account_dbs};
 use crate::tools::wechat_keys::{extract_keys_async, get_image_keys, get_stored_keys, store_keys};
 use crate::tools::wechat_media::get_message_media;
@@ -242,12 +243,24 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
                 .as_millis(),
             ext
         );
-        if let Ok(bytes) =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data)
-        {
-            if std::fs::write(&path, &bytes).is_ok() {
-                image_mime = Some(img.mime_type.clone());
-                image_path = Some(path);
+        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data) {
+            Ok(bytes) => match std::fs::write(&path, &bytes) {
+                Ok(_) => {
+                    image_mime = Some(img.mime_type.clone());
+                    image_path = Some(path);
+                }
+                Err(e) => {
+                    return Json(SendResult {
+                        success: false,
+                        error: Some(format!("Failed to write temp image: {e}")),
+                    });
+                }
+            },
+            Err(e) => {
+                return Json(SendResult {
+                    success: false,
+                    error: Some(format!("Failed to decode base64 image data: {e}")),
+                });
             }
         }
     }
@@ -300,6 +313,13 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         }
     }
 
+    let display_name = session.logged_in_user.as_ref().and_then(|logged_in_user| {
+        let db = get_db();
+        let keys = get_stored_keys(&db, &session.id, logged_in_user);
+        wechat_chats::get_chat_by_username(logged_in_user, &keys, &input.chat_id)
+            .map(|chat| chat.name)
+    });
+
     let mut context = {
         let db = get_db();
         create_context(session, &db)
@@ -308,6 +328,7 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
     let plan = SendMessagePlan;
     let params = SendMessageParams {
         chat_id: input.chat_id,
+        display_name,
         message: input.text,
         image_path: image_path.clone(),
         image_mime,

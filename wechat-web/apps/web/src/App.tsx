@@ -318,9 +318,17 @@ export function App() {
 
   async function refreshChats() {
     try {
+      const selectedId = selectedChatIdRef.current;
       const next = (await api.chats())
         .filter(isRegularChat)
-        .map((chat) => shouldSuppressUnread(chat, clearedUnreadMarkersRef.current.get(chat.id)) ? { ...chat, unreadCount: 0 } : chat);
+        .map((chat) => {
+          if (chat.id === selectedId) {
+            clearedUnreadMarkersRef.current.set(chat.id, clearedMarkerFor(chat));
+            return { ...chat, unreadCount: 0 };
+          }
+          return shouldSuppressUnread(chat, clearedUnreadMarkersRef.current.get(chat.id)) ? { ...chat, unreadCount: 0 } : chat;
+        });
+      if (selectedId) writeClearedUnreads(clearedUnreadMarkersRef.current);
       setChats(next);
       setError("");
       if (!selectedChatIdRef.current && next[0]) {

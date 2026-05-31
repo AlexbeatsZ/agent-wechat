@@ -1,7 +1,6 @@
 use super::Plan;
 use crate::ia::actions;
 use crate::ia::compose::{find_compose_area, summarize_compose_candidates};
-use crate::ia::selectors::query_selector;
 use crate::ia::types::*;
 use crate::sessions::manager::get_session;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
@@ -11,6 +10,7 @@ pub struct SendMessagePlan;
 
 pub struct SendMessageParams {
     pub chat_id: String,
+    pub display_name: Option<String>,
     pub message: Option<String>,
     pub image_path: Option<String>,
     pub image_mime: Option<String>,
@@ -29,7 +29,9 @@ pub struct SendMessagePlanState {
     pub phase: SendMessagePhase,
     pub open_result: Option<OpenChatResult>,
     pub focus_attempts: u32,
+    pub reopen_attempts: u32,
     pub confirm_attempts: u32,
+    pub fallback_compose_focus: bool,
     pub error: Option<String>,
 }
 
@@ -47,7 +49,9 @@ impl Plan for SendMessagePlan {
             phase: SendMessagePhase::Opening,
             open_result: None,
             focus_attempts: 0,
+            reopen_attempts: 0,
             confirm_attempts: 0,
+            fallback_compose_focus: false,
             error: None,
         }
     }
@@ -86,18 +90,18 @@ impl Plan for SendMessagePlan {
                         return None;
                     }
 
-                    let chat_list_item = query_selector(a11y, r#"list[name="Chats"] > list-item"#);
-                    let click_xy = chat_list_item.and_then(|item| {
-                        item.bounds.as_ref().map(|b| {
-                            (
-                                (b.x + b.width / 2.0).round(),
-                                (b.y + b.height / 2.0).round(),
-                            )
-                        })
-                    });
-
-                    let force = main_state_id == Some("chat");
-                    let result = open_chat(session_id, &params.chat_id, force, click_xy).await;
+                    // The in-memory current selection can drift from the visible
+                    // UI after reconnects or failed media sends. Sending is
+                    // user-visible and should always resynchronize the chat pane.
+                    let force = true;
+                    let result = open_chat(
+                        session_id,
+                        &params.chat_id,
+                        force,
+                        None,
+                        params.display_name.as_deref(),
+                    )
+                    .await;
 
                     if !result.ok {
                         plan_state.error = Some(
@@ -137,6 +141,36 @@ impl Plan for SendMessagePlan {
                                     .and_then(|m| m.frame.clone()),
                             });
                         }
+                        if plan_state.reopen_attempts < 1 {
+                            plan_state.reopen_attempts += 1;
+                            plan_state.focus_attempts = 0;
+
+                            let result = open_chat(
+                                session_id,
+                                &params.chat_id,
+                                true,
+                                None,
+                                params.display_name.as_deref(),
+                            )
+                            .await;
+                            if !result.ok {
+                                plan_state.error = Some(
+                                    result
+                                        .error
+                                        .clone()
+                                        .unwrap_or_else(|| "无法重新打开聊天".to_string()),
+                                );
+                                return None;
+                            }
+                            plan_state.open_result = Some(result);
+                            return Some(SelectedAction {
+                                action: actions::wait_short(),
+                                frame: identified
+                                    .main_window
+                                    .as_ref()
+                                    .and_then(|m| m.frame.clone()),
+                            });
+                        }
                         plan_state.error = Some("聊天未打开".to_string());
                         return None;
                     }
@@ -164,8 +198,15 @@ impl Plan for SendMessagePlan {
                                 "[send_message] compose area not found while focusing: {}",
                                 summarize_compose_candidates(a11y)
                             );
-                            plan_state.error = Some("未找到输入框或发送按钮".to_string());
-                            return None;
+                            plan_state.fallback_compose_focus = true;
+                            plan_state.phase = SendMessagePhase::Inputting;
+                            return Some(SelectedAction {
+                                action: actions::click_at(300.0, 690.0),
+                                frame: identified
+                                    .main_window
+                                    .as_ref()
+                                    .and_then(|m| m.frame.clone()),
+                            });
                         }
                     };
 
@@ -196,7 +237,7 @@ impl Plan for SendMessagePlan {
 
                 SendMessagePhase::Inputting => {
                     let found = find_compose_area(a11y);
-                    if found.is_none() {
+                    if found.is_none() && !plan_state.fallback_compose_focus {
                         tracing::warn!(
                             "[send_message] compose area not found while inputting: {}",
                             summarize_compose_candidates(a11y)
