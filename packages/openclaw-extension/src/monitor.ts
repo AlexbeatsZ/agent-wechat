@@ -1,5 +1,7 @@
 import { WeChatClient } from "@agent-wechat/shared";
 import type { Chat, Message, MediaResult, AuthStatus } from "@agent-wechat/shared";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
 import type { ResolvedWeChatAccount } from "./types.js";
 import { getWeChatRuntime } from "./runtime.js";
@@ -58,6 +60,81 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+function lastSeenKey(accountId: string, chatId: string): string {
+  return `${accountId}::${chatId}`;
+}
+
+function lastSeenStatePath(accountId: string): string {
+  const safeAccountId = accountId.replace(/[^a-zA-Z0-9_.-]/g, "_");
+  return path.join(process.cwd(), ".openclaw", "wechat-monitor", `${safeAccountId}.last-seen.json`);
+}
+
+async function loadLastSeenState(
+  accountId: string,
+  log?: { info?: (...args: any[]) => void; error?: (...args: any[]) => void },
+): Promise<Map<string, number>> {
+  const file = lastSeenStatePath(accountId);
+  try {
+    const raw = await fs.readFile(file, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    const entries = Object.entries(parsed).filter(([, value]) => Number.isFinite(value));
+    log?.info?.(`[wechat:${accountId}] Loaded ${entries.length} persisted lastSeenId entries`);
+    return new Map(entries);
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      log?.error?.(`[wechat:${accountId}] Failed to load lastSeenId state: ${err}`);
+    }
+    return new Map();
+  }
+}
+
+async function saveLastSeenState(
+  accountId: string,
+  lastSeenId: Map<string, number>,
+  log?: { error?: (...args: any[]) => void },
+): Promise<void> {
+  const file = lastSeenStatePath(accountId);
+  const dir = path.dirname(file);
+  const tmp = `${file}.${process.pid}.tmp`;
+  const data = JSON.stringify(Object.fromEntries(lastSeenId), null, 2);
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(tmp, data, "utf8");
+    await fs.rename(tmp, file);
+  } catch (err) {
+    log?.error?.(`[wechat:${accountId}] Failed to save lastSeenId state: ${err}`);
+  }
+}
+
+async function markLastSeen(
+  accountId: string,
+  chatId: string,
+  localId: number,
+  lastSeenId: Map<string, number>,
+  log?: { error?: (...args: any[]) => void },
+): Promise<void> {
+  lastSeenId.set(lastSeenKey(accountId, chatId), localId);
+  await saveLastSeenState(accountId, lastSeenId, log);
+}
+
+async function waitUnreadCleared(
+  client: WeChatClient,
+  chatId: string,
+  attempts = 6,
+  intervalMs = 500,
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const chat = await client.getChat(chatId);
+    if ((chat?.unreadCount ?? 0) === 0) {
+      return true;
+    }
+    if (attempt < attempts) {
+      await sleep(intervalMs);
+    }
+  }
+  return false;
+}
+
 /**
  * Poll for media data, retrying until data is available or max attempts reached.
  */
@@ -75,11 +152,15 @@ async function pollMedia(
       // Server knows this message type has no media — no point retrying
       return null;
     }
-    if (result.data) {
+    if (result.data || result.url) {
       return result;
     }
+    if (result.retryable === false) {
+      log?.info?.(`[media] ${chatId}:${localId} not retryable, reason=${result.reason ?? "unknown"}`);
+      return null;
+    }
     if (attempt < maxAttempts) {
-      log?.info?.(`[media] Attempt ${attempt}/${maxAttempts} for ${chatId}:${localId} returned no data, retrying...`);
+      log?.info?.(`[media] Attempt ${attempt}/${maxAttempts} for ${chatId}:${localId} returned no data, reason=${result.reason ?? "unknown"}, retrying...`);
       await new Promise(r => setTimeout(r, intervalMs));
     }
   }
@@ -105,7 +186,7 @@ export async function startWeChatMonitor(
   const client = new WeChatClient({ baseUrl: account.serverUrl, token: account.token });
 
   // Track last-seen message ID per chat
-  const lastSeenId = new Map<string, number>();
+  const lastSeenId = await loadLastSeenState(account.accountId, log);
 
   // Buffer non-mentioned group messages for catch-up context
   const groupHistory = new Map<string, ProcessedMessage[]>();
@@ -196,9 +277,13 @@ export async function startWeChatMonitor(
       }
 
       // Filter to chats with unreads (skip official accounts)
-      const unreadChats = chats.filter(
-        (c) => c.unreadCount > 0 && !isOfficialAccount(c.username ?? c.id),
-      );
+      const unreadChats = chats.filter((c) => {
+        const chatId = c.username ?? c.id;
+        const processedUntil = lastSeenId.get(lastSeenKey(account.accountId, chatId)) ?? 0;
+        return c.unreadCount > 0
+          && !isOfficialAccount(chatId)
+          && (!c.lastMsgLocalId || c.lastMsgLocalId > processedUntil);
+      });
       if (unreadChats.length > 0) {
         log?.info?.(
           `[wechat:${account.accountId}] ${unreadChats.length} chat(s) with unreads`,
@@ -227,7 +312,7 @@ export async function startWeChatMonitor(
         if (abortSignal.aborted) break;
         const chatId = chat.username ?? chat.id;
         if (isOfficialAccount(chatId)) continue; // skip official accounts
-        const prevSeen = lastSeenId.get(chatId);
+        const prevSeen = lastSeenId.get(lastSeenKey(account.accountId, chatId));
         if (prevSeen === undefined) continue; // not tracked yet
         if (unreadChats.some((c) => (c.username ?? c.id) === chatId)) continue; // already processed
         if (!chat.lastMsgLocalId || chat.lastMsgLocalId <= prevSeen) continue; // nothing new
@@ -306,7 +391,7 @@ async function prepareMessage(
       const result = await pollMedia(client, chatId, msg.localId, log);
       if (result && result.data && result.type !== "unsupported") {
         hasMedia = true;
-        log?.info?.(`[wechat:${liveAccount.accountId}] Media result: type=${result.type}, format=${result.format}, hasData=${!!result.data}, filename=${result.filename}`);
+        log?.info?.(`[wechat:${liveAccount.accountId}] Media result: type=${result.type}, format=${result.format}, hasData=${!!result.data}, filename=${result.filename}, reason=${result.reason ?? "ok"}`);
         const mimeMap: Record<string, string> = {
           jpeg: "image/jpeg",
           jpg: "image/jpeg",
@@ -334,10 +419,15 @@ async function prepareMessage(
         );
         mediaPath = saved?.path;
         log?.info?.(`[wechat:${liveAccount.accountId}] Saved media to ${mediaPath}`);
+      } else if (result?.url) {
+        hasMedia = true;
+        log?.info?.(
+          `[wechat:${liveAccount.accountId}] Media URL available for msg ${msg.localId}: type=${result.type}, reason=${result.reason ?? "url_only"}, url=${result.url}`,
+        );
       } else if (MEDIA_TYPES.has(baseType)) {
         // Image/voice expected media but got nothing
         hasMedia = true;
-        log?.info?.(`[wechat:${liveAccount.accountId}] Media not available after retries for msg ${msg.localId}`);
+        log?.info?.(`[wechat:${liveAccount.accountId}] Media not available after retries for msg ${msg.localId}, reason=${result?.reason ?? "unknown"}`);
       }
     } catch (err) {
       log?.error?.(`[wechat:${liveAccount.accountId}] Media download failed: ${err}`);
@@ -778,18 +868,33 @@ async function processUnreadChat(
   if (!skipOpen) {
     log?.info?.(`[wechat:${liveAccount.accountId}] Opening chat ${chatId}...`);
     try {
-      await client.openChat(chatId, true);
+      const openResult = await client.openChat(chatId, true);
+      if (!openResult.ok) {
+        log?.error?.(
+          `[wechat:${liveAccount.accountId}] Failed to open chat ${chatId}: ${openResult.error ?? "openChat returned ok=false"}`,
+        );
+        return;
+      }
       log?.info?.(`[wechat:${liveAccount.accountId}] Opened chat ${chatId}`);
+      const cleared = await waitUnreadCleared(client, chatId).catch((err) => {
+        log?.error?.(`[wechat:${liveAccount.accountId}] Failed to verify unread clear for ${chatId}: ${err}`);
+        return false;
+      });
+      log?.info?.(
+        `[wechat:${liveAccount.accountId}] WeChat unread cleared for ${chatId}: ${cleared}`,
+      );
     } catch (err) {
       log?.error?.(
         `[wechat:${liveAccount.accountId}] Failed to open chat ${chatId}: ${err}`,
       );
+      return;
     }
   }
 
   // Determine how many messages to fetch
-  const firstPoll = !lastSeenId.has(chatId);
-  const prevLastSeen = lastSeenId.get(chatId) ?? 0;
+  const seenKey = lastSeenKey(liveAccount.accountId, chatId);
+  const firstPoll = !lastSeenId.has(seenKey);
+  const prevLastSeen = lastSeenId.get(seenKey) ?? 0;
   const fetchLimit = Math.max(chat.unreadCount, 20);
 
   let messages: Message[];
@@ -817,14 +922,14 @@ async function processUnreadChat(
     if (unread > 0 && unread < messages.length) {
       newMessages = messages.slice(-unread);
       const seenMax = messages[messages.length - unread - 1].localId;
-      lastSeenId.set(chatId, seenMax);
+      await markLastSeen(liveAccount.accountId, chatId, seenMax, lastSeenId, log);
     } else if (unread >= messages.length) {
       // All fetched messages are unread
       newMessages = messages;
     } else {
       // No unreads — just seed lastSeenId, don't process anything
       const maxId = messages[messages.length - 1].localId;
-      lastSeenId.set(chatId, maxId);
+      await markLastSeen(liveAccount.accountId, chatId, maxId, lastSeenId, log);
       return;
     }
   } else {
@@ -871,7 +976,8 @@ async function processUnreadChat(
         }
         log?.info?.(`[wechat:${liveAccount.accountId}] Buffered ${processed.length} msg(s) for group history in ${chatId}`);
         const maxId = Math.max(...newMessages.map((m) => m.localId));
-        lastSeenId.set(chatId, maxId);
+        await markLastSeen(liveAccount.accountId, chatId, maxId, lastSeenId, log);
+        log?.info?.(`[wechat:${liveAccount.accountId}] Agent processed ${chatId} through localId=${maxId}`);
         return;
       }
 
@@ -950,5 +1056,6 @@ async function processUnreadChat(
 
   // Update lastSeenId (track all messages including self-sent/filtered)
   const maxId = Math.max(...newMessages.map((m) => m.localId));
-  lastSeenId.set(chatId, maxId);
+  await markLastSeen(liveAccount.accountId, chatId, maxId, lastSeenId, log);
+  log?.info?.(`[wechat:${liveAccount.accountId}] Agent processed ${chatId} through localId=${maxId}`);
 }

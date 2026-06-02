@@ -3,6 +3,7 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
 use crate::context::create_context;
@@ -10,11 +11,11 @@ use crate::db::get_db;
 use crate::execution::run_execution_loop;
 use crate::ia::types::{MediaResult, Message, SendResult, SubscriptionEvent};
 use crate::plans::send_message::{SendMessageParams, SendMessagePlan};
+use crate::sessions::manager::get_session;
 use crate::tools::wechat_db::{find_wechat_pid, list_account_dbs};
-use crate::tools::wechat_keys::{extract_keys_async, get_stored_keys, get_image_keys, store_keys};
+use crate::tools::wechat_keys::{extract_keys_async, get_image_keys, get_stored_keys, store_keys};
 use crate::tools::wechat_media::get_message_media;
 use crate::tools::wechat_messages;
-use crate::sessions::manager::get_session;
 
 #[derive(Deserialize)]
 pub struct ListParams {
@@ -26,6 +27,54 @@ pub struct ListParams {
 
 fn default_limit() -> i64 {
     50
+}
+
+async fn ensure_keys_for_media(
+    account_dir: &str,
+    session_id: &str,
+    logged_in_user: &str,
+    mut keys: HashMap<String, String>,
+) -> HashMap<String, String> {
+    let on_disk = list_account_dbs(account_dir);
+    let missing: Vec<String> = on_disk
+        .iter()
+        .filter(|name| {
+            let relevant = (name.starts_with("message_") && name.ends_with(".db"))
+                || (name.starts_with("media_") && name.ends_with(".db"))
+                || (name.starts_with("biz_message_") && name.ends_with(".db"))
+                || matches!(
+                    name.as_str(),
+                    "message_resource.db"
+                        | "hardlink.db"
+                        | "emoticon.db"
+                        | "contact.db"
+                        | "session.db"
+                );
+            relevant && !keys.contains_key(name.as_str())
+        })
+        .cloned()
+        .collect();
+
+    if missing.is_empty() {
+        return keys;
+    }
+
+    tracing::info!(
+        "[media] missing DB keys, refreshing: {}",
+        missing.join(", ")
+    );
+    if let Some(pid) = find_wechat_pid() {
+        let extracted = extract_keys_async(pid).await;
+        if !extracted.is_empty() {
+            let db = get_db();
+            store_keys(&db, session_id, logged_in_user, &extracted);
+            keys = get_stored_keys(&db, session_id, logged_in_user);
+        }
+    } else {
+        tracing::warn!("[media] cannot refresh DB keys: WeChat PID not found");
+    }
+
+    keys
 }
 
 pub async fn list_messages(
@@ -66,7 +115,12 @@ pub async fn list_messages(
         }
     }
 
-    if !keys.keys().any(|k| k.starts_with("message_") && k.ends_with(".db") && !k.contains("fts") && !k.contains("resource")) {
+    if !keys.keys().any(|k| {
+        k.starts_with("message_")
+            && k.ends_with(".db")
+            && !k.contains("fts")
+            && !k.contains("resource")
+    }) {
         return Json(Vec::new());
     }
 
@@ -89,6 +143,8 @@ pub async fn get_media(Path((chat_id, local_id)): Path<(String, i64)>) -> Json<M
                 url: None,
                 format: String::new(),
                 filename: String::new(),
+                reason: Some("unsupported".to_string()),
+                retryable: Some(false),
             })
         }
     };
@@ -101,30 +157,17 @@ pub async fn get_media(Path((chat_id, local_id)): Path<(String, i64)>) -> Json<M
                 url: None,
                 format: String::new(),
                 filename: String::new(),
+                reason: Some("unsupported".to_string()),
+                retryable: Some(false),
             })
         }
     };
 
-    let mut keys = {
+    let keys = {
         let db = get_db();
         get_stored_keys(&db, &session.id, &logged_in_user)
     };
-
-    // Lazy key extraction: if media_*.db files exist on disk without stored keys, extract them
-    let on_disk = list_account_dbs(&logged_in_user);
-    let has_missing_media = on_disk.iter().any(|name| {
-        name.starts_with("media_") && name.ends_with(".db") && !keys.contains_key(name.as_str())
-    });
-    if has_missing_media {
-        if let Some(pid) = find_wechat_pid() {
-            let extracted = extract_keys_async(pid).await;
-            if !extracted.is_empty() {
-                let db = get_db();
-                store_keys(&db, &session.id, &logged_in_user, &extracted);
-                keys = get_stored_keys(&db, &session.id, &logged_in_user);
-            }
-        }
-    }
+    let keys = ensure_keys_for_media(&logged_in_user, &session.id, &logged_in_user, keys).await;
 
     let image_keys = {
         let db = get_db();
@@ -196,9 +239,17 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
             "image/gif" => ".gif",
             _ => ".png",
         };
-        let path = format!("/tmp/send_image_{}{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), ext);
-        if let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data) {
+        let path = format!(
+            "/tmp/send_image_{}{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+            ext
+        );
+        if let Ok(bytes) =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data)
+        {
             if std::fs::write(&path, &bytes).is_ok() {
                 image_mime = Some(img.mime_type.clone());
                 image_path = Some(path);
@@ -214,18 +265,30 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         // path stays portable across locales.  The dot is preserved so that
         // file extensions survive (e.g. "遗憾.pdf" → "__.pdf"); the mangled
         // stem is acceptable since this is a transient temp path.
-        let safe_name: String = f.filename.chars().map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        }).collect();
-        let path = format!("/tmp/send_file_{}_{}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), safe_name);
+        let safe_name: String = f
+            .filename
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let path = format!(
+            "/tmp/send_file_{}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+            safe_name
+        );
         match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &f.data) {
             Ok(bytes) => match std::fs::write(&path, &bytes) {
-                Ok(_) => { file_path = Some(path); }
+                Ok(_) => {
+                    file_path = Some(path);
+                }
                 Err(e) => {
                     return Json(SendResult {
                         success: false,

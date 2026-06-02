@@ -1,0 +1,21 @@
+#!/bin/bash
+# Replace the input contents and send a text message in one tool call.
+# Usage: send-text "<text>"
+
+set -euo pipefail
+
+if [ -z "${1:-}" ]; then
+  echo "Usage: send-text \"<text>\"" >&2
+  exit 1
+fi
+
+TEXT="$1"
+
+xdotool key ctrl+a
+echo -n "$TEXT" | xclip -selection clipboard >/dev/null 2>&1 &
+sleep 0.05
+xdotool key ctrl+v
+sleep 0.05
+xdotool key Return
+
+echo "sent text"

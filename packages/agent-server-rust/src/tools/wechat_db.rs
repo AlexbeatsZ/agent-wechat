@@ -8,11 +8,7 @@ use std::process::Command;
 /// that could interfere with WeChat's own writes. Since we open a fresh
 /// connection per query and drop it immediately, immutable mode is safe —
 /// we always see the latest committed state at open time.
-pub fn query_wechat_db(
-    db_path: &str,
-    hex_key: &str,
-    sql: &str,
-) -> Vec<Value> {
+pub fn query_wechat_db(db_path: &str, hex_key: &str, sql: &str) -> Vec<Value> {
     let uri = format!("file:{}?immutable=1", db_path);
     let conn = match Connection::open_with_flags(
         &uri,
@@ -42,11 +38,7 @@ pub fn query_wechat_db(
         }
     };
 
-    let col_names: Vec<String> = stmt
-        .column_names()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
 
     let rows = stmt.query_map([], |row| {
         let mut map = Map::new();
@@ -179,30 +171,7 @@ pub fn list_account_dbs(account_dir: &str) -> Vec<String> {
 
 /// Get the full path to a WeChat database file.
 pub fn get_db_path(account_dir: &str, db_name: &str) -> String {
-    let sub_dir_map: &[(&str, &str)] = &[
-        ("contact.db", "contact"),
-        ("contact_fts.db", "contact"),
-        ("session.db", "session"),
-        ("message_0.db", "message"),
-        ("message_fts.db", "message"),
-        ("message_resource.db", "message"),
-        ("biz_message_0.db", "message"),
-        ("media_0.db", "message"),
-        ("general.db", "general"),
-        ("hardlink.db", "hardlink"),
-        ("head_image.db", "head_image"),
-        ("emoticon.db", "emoticon"),
-        ("favorite.db", "favorite"),
-        ("favorite_fts.db", "favorite"),
-        ("sns.db", "sns"),
-        ("bizchat.db", "bizchat"),
-    ];
-
-    let sub_dir = sub_dir_map
-        .iter()
-        .find(|(name, _)| *name == db_name)
-        .map(|(_, dir)| *dir)
-        .unwrap_or_else(|| db_name.strip_suffix(".db").unwrap_or(db_name));
+    let sub_dir = db_storage_sub_dir(db_name);
 
     let base_paths = [
         format!("/home/wechat/xwechat_files/{account_dir}"),
@@ -228,8 +197,28 @@ pub fn get_db_path(account_dir: &str, db_name: &str) -> String {
         .to_string()
 }
 
+fn db_storage_sub_dir(db_name: &str) -> &str {
+    match db_name {
+        "contact.db" | "contact_fts.db" => "contact",
+        "session.db" => "session",
+        "message_fts.db" | "message_resource.db" => "message",
+        "general.db" => "general",
+        "hardlink.db" => "hardlink",
+        "head_image.db" => "head_image",
+        "emoticon.db" => "emoticon",
+        "favorite.db" | "favorite_fts.db" => "favorite",
+        "sns.db" => "sns",
+        "bizchat.db" => "bizchat",
+        name if name.starts_with("message_") && name.ends_with(".db") => "message",
+        name if name.starts_with("media_") && name.ends_with(".db") => "message",
+        name if name.starts_with("biz_message_") && name.ends_with(".db") => "message",
+        name => name.strip_suffix(".db").unwrap_or(name),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::db_storage_sub_dir;
     use rusqlite::{Connection, OpenFlags};
     use std::sync::{Arc, Barrier};
     use std::time::{Duration, Instant};
@@ -434,6 +423,28 @@ mod tests {
         let count_fresh: i64 = reader2
             .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count_fresh, 3, "Fresh immutable connection should see committed writes");
+        assert_eq!(
+            count_fresh, 3,
+            "Fresh immutable connection should see committed writes"
+        );
+    }
+
+    #[test]
+    fn maps_split_wechat_dbs_to_storage_dirs() {
+        let cases = [
+            ("message_0.db", "message"),
+            ("message_1.db", "message"),
+            ("message_99.db", "message"),
+            ("media_0.db", "message"),
+            ("media_1.db", "message"),
+            ("message_resource.db", "message"),
+            ("hardlink.db", "hardlink"),
+            ("contact.db", "contact"),
+            ("session.db", "session"),
+        ];
+
+        for (db_name, expected) in cases {
+            assert_eq!(db_storage_sub_dir(db_name), expected, "{db_name}");
+        }
     }
 }

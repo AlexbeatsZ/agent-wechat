@@ -1,6 +1,6 @@
 #!/bin/bash
 # Paste an image file via clipboard
-# Usage: paste-image <file-path> [mime-type]
+# Usage: paste-image <file-path> [mime-type] [--send]
 
 set -euo pipefail
 
@@ -11,6 +11,13 @@ fi
 
 FILE="$1"
 MIME="${2:-image/png}"
+SEND_AFTER_PASTE=false
+if [ "$MIME" = "--send" ]; then
+  MIME="image/png"
+  SEND_AFTER_PASTE=true
+elif [ "${3:-}" = "--send" ]; then
+  SEND_AFTER_PASTE=true
+fi
 
 if [ ! -f "$FILE" ]; then
   echo "File not found: $FILE" >&2
@@ -27,5 +34,9 @@ xdotool key ctrl+v
 
 # Small delay after paste
 sleep 0.1
+
+if [ "$SEND_AFTER_PASTE" = true ]; then
+  xdotool key Return
+fi
 
 echo "pasted: $FILE ($MIME)"

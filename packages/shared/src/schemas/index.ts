@@ -131,6 +131,7 @@ export const chatSchema = z.object({
   lastActivityAt: z.string().optional(),
   unreadCount: z.number().int().nonnegative(),
   isGroup: z.boolean(),
+  lastMsgLocalId: z.number().int().optional(),
 });
 
 export const listChatsParamsSchema = z.object({
@@ -203,11 +204,23 @@ export const getMediaParamsSchema = z.object({
 });
 
 export const mediaResultSchema = z.object({
-  type: z.enum(["image", "emoji", "voice", "video", "unsupported"]),
+  type: z.enum(["image", "emoji", "voice", "file", "video", "pending", "unsupported"]),
   data: z.string().optional(),
   url: z.string().optional(),
   format: z.string(),
   filename: z.string(),
+  reason: z.enum([
+    "unsupported",
+    "pending",
+    "not_downloaded",
+    "missing_key",
+    "path_not_found",
+    "decrypt_failed",
+    "convert_failed",
+    "db_lookup_failed",
+    "cdn_only",
+  ]).optional(),
+  retryable: z.boolean().optional(),
 });
 
 // ============================================

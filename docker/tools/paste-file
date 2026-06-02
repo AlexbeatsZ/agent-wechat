@@ -1,6 +1,6 @@
 #!/bin/bash
 # Paste a file via clipboard (as file URI)
-# Usage: paste-file <file-path>
+# Usage: paste-file <file-path> [--send]
 #
 # Sets clipboard to text/uri-list so Qt apps treat it as a file paste.
 # If the path contains non-ASCII characters (e.g. CJK filenames), the
@@ -15,6 +15,10 @@ if [ -z "${1:-}" ]; then
 fi
 
 FILE="$1"
+SEND_AFTER_PASTE=false
+if [ "${2:-}" = "--send" ]; then
+  SEND_AFTER_PASTE=true
+fi
 
 if [ ! -f "$FILE" ]; then
   echo "File not found: $FILE" >&2
@@ -46,5 +50,9 @@ xdotool key ctrl+v
 
 # Small delay after paste
 sleep 0.1
+
+if [ "$SEND_AFTER_PASTE" = true ]; then
+  xdotool key Return
+fi
 
 echo "pasted file: $ABS_PATH"

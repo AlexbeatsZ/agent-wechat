@@ -260,7 +260,9 @@ def run_frida_script(pid, script_path, timeout=30, stop_on="SCRIPT_DONE"):
             proc.wait(timeout=3)
         except Exception:
             proc.kill()
-        time.sleep(1)  # ensure frida fully detaches before next attach
+        detach_sleep = float(os.environ.get("CHAT_SELECT_DETACH_SLEEP", "0.1"))
+        if detach_sleep > 0:
+            time.sleep(detach_sleep)  # ensure frida fully detaches before next attach
     return lines
 
 
