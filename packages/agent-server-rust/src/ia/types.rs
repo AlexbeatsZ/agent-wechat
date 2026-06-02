@@ -352,6 +352,9 @@ pub struct Chat {
     pub unread_count: i32,
     pub is_group: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
     pub last_msg_local_id: Option<i64>,
 }
@@ -530,6 +533,9 @@ pub struct SendResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub code: Option<String>,
     /// Whether the sent message was confirmed via DB polling (not just UI state).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -542,6 +548,19 @@ pub struct SendResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub confirmation_method: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ServerFile {
+    pub id: String,
+    pub filename: String,
+    #[ts(type = "number")]
+    pub size: u64,
+    pub modified_at: String,
+    pub source_path_hint: String,
+    pub content_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

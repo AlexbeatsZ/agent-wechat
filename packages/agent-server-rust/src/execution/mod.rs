@@ -271,10 +271,14 @@ where
 
         // No action = stuck (only if plan returns None)
         if selected.is_none() {
+            let error = plan
+                .stuck_error(&plan_state)
+                .map(|(code, message)| format!("{code}: {message}"))
+                .unwrap_or_else(|| "No action selected".to_string());
             return (
                 ExecutionResult {
                     success: false,
-                    error: Some("No action selected".to_string()),
+                    error: Some(error),
                 },
                 plan_state,
             );

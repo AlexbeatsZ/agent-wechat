@@ -7,15 +7,8 @@ const A11Y_SCRIPT_PATH: &str = "/opt/tools/a11y-dump";
 /// Uses the Python a11y-dump script.
 /// NOTE: Ancestor traversal is done via recursive tree walk (find_edit_send_pair, selectors),
 /// not via parent_index back-links. A11yNode.parent_index was removed as it was never populated.
-pub async fn get_a11y_desktop(
-    options: &ExecOptions,
-) -> Result<A11yNode, String> {
-    let result = exec_command(
-        "python3",
-        &[A11Y_SCRIPT_PATH, "--format", "json"],
-        options,
-    )
-    .await;
+pub async fn get_a11y_desktop(options: &ExecOptions) -> Result<A11yNode, String> {
+    let result = exec_command("python3", &[A11Y_SCRIPT_PATH, "--format", "json"], options).await;
 
     if result.exit_code != 0 {
         return Err(result.stderr.clone().or_if_empty(&result.stdout));
@@ -29,12 +22,7 @@ pub async fn get_a11y_desktop(
 
 /// Get a11y tree as ARIA-style text.
 pub async fn get_a11y_aria(options: &ExecOptions) -> Result<String, String> {
-    let result = exec_command(
-        "python3",
-        &[A11Y_SCRIPT_PATH, "--format", "aria"],
-        options,
-    )
-    .await;
+    let result = exec_command("python3", &[A11Y_SCRIPT_PATH, "--format", "aria"], options).await;
 
     if result.exit_code != 0 {
         return Err(result.stderr.clone().or_if_empty(&result.stdout));
@@ -78,16 +66,23 @@ pub fn tree_to_aria(node: &A11yNode, depth: usize) -> String {
         .map(|s| format!("[{}]", s.join(",")))
         .unwrap_or_default();
 
-    let parts: Vec<&str> = [node.role.as_str(), name.as_str(), states.as_str(), bounds.as_str()]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect();
+    let parts: Vec<&str> = [
+        node.role.as_str(),
+        name.as_str(),
+        states.as_str(),
+        bounds.as_str(),
+    ]
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect();
     let line = format!("{indent}- {}", parts.join(" "));
 
     if let Some(children) = &node.children {
         if !children.is_empty() {
-            let child_lines: Vec<String> =
-                children.iter().map(|c| tree_to_aria(c, depth + 1)).collect();
+            let child_lines: Vec<String> = children
+                .iter()
+                .map(|c| tree_to_aria(c, depth + 1))
+                .collect();
             return format!("{line}\n{}", child_lines.join("\n"));
         }
     }

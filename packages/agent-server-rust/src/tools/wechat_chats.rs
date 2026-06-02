@@ -2,6 +2,33 @@ use super::wechat_db::{get_db_path, query_wechat_db};
 use crate::ia::types::Chat;
 use std::collections::HashMap;
 
+pub fn classify_chat(username: &str) -> String {
+    if username == "filehelper" {
+        "filehelper".to_string()
+    } else if username.ends_with("@chatroom") {
+        "group".to_string()
+    } else if username.starts_with("gh_") {
+        "official".to_string()
+    } else if username.starts_with("ww_") || username.ends_with("@qy_u") {
+        "service".to_string()
+    } else if matches!(
+        username,
+        "weixin"
+            | "qqmail"
+            | "mphelper"
+            | "exmail_tool"
+            | "brandsessionholder"
+            | "fmessage"
+            | "medianote"
+    ) {
+        "system".to_string()
+    } else if username.contains("@openim") {
+        "openim".to_string()
+    } else {
+        "individual".to_string()
+    }
+}
+
 /// List chats by querying WeChat's session.db and contact.db.
 pub fn list_chats(
     account_dir: &str,
@@ -76,9 +103,14 @@ pub fn list_chats(
             let username = session.get("username")?.as_str()?.to_string();
             let contact = contact_map.get(&username);
             let is_group = username.contains("@chatroom");
+            let kind = classify_chat(&username);
 
             let name = contact
-                .and_then(|c| c.get("remark").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+                .and_then(|c| {
+                    c.get("remark")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                })
                 .or_else(|| {
                     contact.and_then(|c| {
                         c.get("nick_name")
@@ -90,7 +122,11 @@ pub fn list_chats(
                 .to_string();
 
             let remark = contact
-                .and_then(|c| c.get("remark").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+                .and_then(|c| {
+                    c.get("remark")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                })
                 .map(String::from);
 
             let unread_count = session
@@ -126,9 +162,7 @@ pub fn list_chats(
                         .unwrap_or_default()
                 });
 
-            let last_msg_local_id = session
-                .get("last_msg_locald_id")
-                .and_then(|v| v.as_i64());
+            let last_msg_local_id = session.get("last_msg_locald_id").and_then(|v| v.as_i64());
 
             Some(Chat {
                 id: username.clone(),
@@ -137,6 +171,7 @@ pub fn list_chats(
                 remark,
                 unread_count,
                 is_group,
+                kind: Some(kind),
                 last_message_preview,
                 last_message_sender,
                 last_activity_at,
@@ -187,7 +222,11 @@ pub fn get_chat_by_username(
     let contact = contacts.first();
 
     let name = contact
-        .and_then(|c| c.get("remark").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+        .and_then(|c| {
+            c.get("remark")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
         .or_else(|| {
             contact.and_then(|c| {
                 c.get("nick_name")
@@ -199,7 +238,11 @@ pub fn get_chat_by_username(
         .to_string();
 
     let remark = contact
-        .and_then(|c| c.get("remark").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+        .and_then(|c| {
+            c.get("remark")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
         .map(String::from);
 
     let unread_count = session
@@ -214,6 +257,7 @@ pub fn get_chat_by_username(
         remark,
         unread_count,
         is_group,
+        kind: Some(classify_chat(username)),
         last_message_preview: session
             .get("summary")
             .and_then(|v| v.as_str())
@@ -233,9 +277,7 @@ pub fn get_chat_by_username(
                     .map(|dt| dt.to_rfc3339())
                     .unwrap_or_default()
             }),
-        last_msg_local_id: session
-            .get("last_msg_locald_id")
-            .and_then(|v| v.as_i64()),
+        last_msg_local_id: session.get("last_msg_locald_id").and_then(|v| v.as_i64()),
     })
 }
 
@@ -338,6 +380,7 @@ pub fn find_chats_by_name(
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i32,
                 is_group,
+                kind: Some(classify_chat(username)),
                 last_message_preview: session
                     .get("summary")
                     .and_then(|v| v.as_str())
@@ -357,9 +400,7 @@ pub fn find_chats_by_name(
                             .map(|dt| dt.to_rfc3339())
                             .unwrap_or_default()
                     }),
-                last_msg_local_id: session
-                    .get("last_msg_locald_id")
-                    .and_then(|v| v.as_i64()),
+                last_msg_local_id: session.get("last_msg_locald_id").and_then(|v| v.as_i64()),
             })
         })
         .collect()

@@ -13,6 +13,7 @@ pub struct SendMessageParams {
     pub image_path: Option<String>,
     pub image_mime: Option<String>,
     pub file_path: Option<String>,
+    pub readonly: bool,
 }
 
 pub enum SendMessagePhase {
@@ -27,6 +28,15 @@ pub struct SendMessagePlanState {
     pub phase: SendMessagePhase,
     pub open_result: Option<OpenChatResult>,
     pub confirm_attempts: u32,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+impl SendMessagePlanState {
+    fn fail(&mut self, code: &str, message: impl Into<String>) {
+        self.error_code = Some(code.to_string());
+        self.error_message = Some(message.into());
+    }
 }
 
 fn find_edit_and_send_button(a11y: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
@@ -80,11 +90,20 @@ impl Plan for SendMessagePlan {
             phase: SendMessagePhase::Opening,
             open_result: None,
             confirm_attempts: 0,
+            error_code: None,
+            error_message: None,
         }
     }
 
     fn is_goal_reached(&self, _state: &AppState, plan_state: &SendMessagePlanState) -> bool {
         matches!(plan_state.phase, SendMessagePhase::Done)
+    }
+
+    fn stuck_error(&self, plan_state: &SendMessagePlanState) -> Option<(String, String)> {
+        match (&plan_state.error_code, &plan_state.error_message) {
+            (Some(code), Some(message)) => Some((code.clone(), message.clone())),
+            _ => None,
+        }
     }
 
     async fn select_action(
@@ -112,7 +131,13 @@ impl Plan for SendMessagePlan {
         loop {
             match &plan_state.phase {
                 SendMessagePhase::Opening => {
+                    if params.readonly {
+                        plan_state.fail("READONLY_CHAT", "当前会话不支持发送");
+                        return None;
+                    }
+
                     if main_state_id != Some("chat") && main_state_id != Some("chat_open") {
+                        plan_state.fail("WECHAT_WINDOW_NOT_FOUND", "微信窗口未进入聊天页");
                         return None;
                     }
 
@@ -149,6 +174,13 @@ impl Plan for SendMessagePlan {
                     let result = open_chat(&params.chat_id, force, click_xy, exec_options).await;
 
                     if !result.ok {
+                        plan_state.fail(
+                            "CHAT_NOT_OPENED",
+                            result
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| "聊天未打开".to_string()),
+                        );
                         return None;
                     }
 
@@ -170,13 +202,17 @@ impl Plan for SendMessagePlan {
 
                 SendMessagePhase::Focusing => {
                     if main_state_id != Some("chat_open") {
+                        plan_state.fail("CHAT_NOT_OPENED", "聊天未打开");
                         return None;
                     }
 
                     let found = find_edit_and_send_button(a11y);
                     let (edit_node, _) = match found {
                         Some(f) => f,
-                        None => return None,
+                        None => {
+                            plan_state.fail("INPUT_NOT_FOUND", "未找到输入框或发送按钮");
+                            return None;
+                        }
                     };
 
                     plan_state.phase = SendMessagePhase::Inputting;
@@ -200,12 +236,14 @@ impl Plan for SendMessagePlan {
                                 .and_then(|m| m.frame.clone()),
                         });
                     }
+                    plan_state.fail("INPUT_NOT_FOUND", "输入框没有可点击区域");
                     return None;
                 }
 
                 SendMessagePhase::Inputting => {
                     let found = find_edit_and_send_button(a11y);
                     if found.is_none() {
+                        plan_state.fail("INPUT_NOT_FOUND", "未找到输入框或发送按钮");
                         return None;
                     }
 
@@ -213,9 +251,18 @@ impl Plan for SendMessagePlan {
 
                     // File
                     if let Some(fp) = &params.file_path {
-                        let result = exec_command("paste-file", &[fp, "--send"], exec_options).await;
+                        let result =
+                            exec_command("paste-file", &[fp, "--send"], exec_options).await;
                         if result.exit_code != 0 {
                             tracing::warn!("[send_message] paste-file failed: {}", result.stderr);
+                            plan_state.fail(
+                                "PASTE_FAILED",
+                                if result.stderr.is_empty() {
+                                    "文件粘贴失败".to_string()
+                                } else {
+                                    result.stderr.clone()
+                                },
+                            );
                             return None;
                         }
                         return Some(SelectedAction {
@@ -237,6 +284,14 @@ impl Plan for SendMessagePlan {
                         let result = exec_command("paste-image", &args, exec_options).await;
                         if result.exit_code != 0 {
                             tracing::warn!("[send_message] paste-image failed: {}", result.stderr);
+                            plan_state.fail(
+                                "PASTE_FAILED",
+                                if result.stderr.is_empty() {
+                                    "图片粘贴失败".to_string()
+                                } else {
+                                    result.stderr.clone()
+                                },
+                            );
                             return None;
                         }
                         return Some(SelectedAction {
@@ -253,6 +308,14 @@ impl Plan for SendMessagePlan {
                         let result = exec_command("send-text", &[msg], exec_options).await;
                         if result.exit_code != 0 {
                             tracing::warn!("[send_message] send-text failed: {}", result.stderr);
+                            plan_state.fail(
+                                "UPLOAD_FAILED",
+                                if result.stderr.is_empty() {
+                                    "文字发送脚本失败".to_string()
+                                } else {
+                                    result.stderr.clone()
+                                },
+                            );
                             return None;
                         }
                         return Some(SelectedAction {
@@ -264,6 +327,7 @@ impl Plan for SendMessagePlan {
                         });
                     }
 
+                    plan_state.fail("UPLOAD_FAILED", "没有可发送的内容");
                     return None;
                 }
 
@@ -271,7 +335,10 @@ impl Plan for SendMessagePlan {
                     let found = find_edit_and_send_button(a11y);
                     let (_, send_btn) = match found {
                         Some(f) => f,
-                        None => return None,
+                        None => {
+                            plan_state.fail("SEND_BUTTON_NOT_FOUND", "未找到发送按钮");
+                            return None;
+                        }
                     };
 
                     let is_disabled = send_btn
@@ -293,6 +360,7 @@ impl Plan for SendMessagePlan {
 
                     plan_state.confirm_attempts += 1;
                     if plan_state.confirm_attempts >= 5 {
+                        plan_state.fail("TIMEOUT", "发送确认超时");
                         return None;
                     }
 

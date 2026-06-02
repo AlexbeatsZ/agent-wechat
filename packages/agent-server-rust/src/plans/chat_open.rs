@@ -2,8 +2,8 @@ use super::Plan;
 use crate::ia::actions;
 use crate::ia::selectors::{query_selector, query_selector_all};
 use crate::ia::types::*;
-use crate::tools::exec::ExecOptions;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
+use crate::tools::exec::ExecOptions;
 
 pub struct ChatOpenPlan;
 

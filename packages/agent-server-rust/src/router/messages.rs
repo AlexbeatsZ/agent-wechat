@@ -12,6 +12,7 @@ use crate::execution::run_execution_loop;
 use crate::ia::types::{MediaResult, Message, SendResult, SubscriptionEvent};
 use crate::plans::send_message::{SendMessageParams, SendMessagePlan};
 use crate::sessions::manager::get_session;
+use crate::tools::wechat_chats;
 use crate::tools::wechat_db::{find_wechat_pid, list_account_dbs};
 use crate::tools::wechat_keys::{extract_keys_async, get_image_keys, get_stored_keys, store_keys};
 use crate::tools::wechat_media::get_message_media;
@@ -205,38 +206,38 @@ pub struct FileInput {
     filename: String,
 }
 
+fn send_error(code: &str, message: impl Into<String>) -> SendResult {
+    SendResult {
+        success: false,
+        error: Some(message.into()),
+        code: Some(code.to_string()),
+        confirmed: None,
+        local_id: None,
+        confirmation_method: None,
+    }
+}
+
 pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
     if input.text.is_none() && input.image.is_none() && input.file.is_none() {
-        return Json(SendResult {
-            success: false,
-            error: Some("No text, image, or file provided".to_string()),
-            confirmed: None,
-            local_id: None,
-            confirmation_method: None,
-        });
+        return Json(send_error(
+            "UPLOAD_FAILED",
+            "No text, image, or file provided",
+        ));
     }
 
     let session = match get_session("default") {
         Some(s) => s,
-        None => {
-            return Json(SendResult {
-                success: false,
-                error: Some("No session available".to_string()),
-                confirmed: None,
-                local_id: None,
-                confirmation_method: None,
-            })
-        }
+        None => return Json(send_error("AGENT_UNAVAILABLE", "No session available")),
     };
 
-    if session.logged_in_user.is_none() {
-        return Json(SendResult {
-            success: false,
-            error: Some("NOT_LOGGED_IN".to_string()),
-            confirmed: None,
-            local_id: None,
-            confirmation_method: None,
-        });
+    let Some(logged_in_user) = session.logged_in_user.clone() else {
+        return Json(send_error("WECHAT_WINDOW_NOT_FOUND", "NOT_LOGGED_IN"));
+    };
+
+    let kind = wechat_chats::classify_chat(&input.chat_id);
+    let readonly = matches!(kind.as_str(), "official" | "service" | "system");
+    if readonly {
+        return Json(send_error("READONLY_CHAT", "当前会话不支持发送"));
     }
 
     // Decode base64 image to temp file
@@ -256,14 +257,24 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
                 .as_millis(),
             ext
         );
-        if let Ok(bytes) =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data)
-        {
-            if std::fs::write(&path, &bytes).is_ok() {
-                image_mime = Some(img.mime_type.clone());
-                image_path = Some(path);
-            }
+        let bytes =
+            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &img.data) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    return Json(send_error(
+                        "UPLOAD_FAILED",
+                        format!("IMAGE_BASE64_DECODE_FAILED: {e}"),
+                    ))
+                }
+            };
+        if let Err(e) = std::fs::write(&path, &bytes) {
+            return Json(send_error(
+                "UPLOAD_FAILED",
+                format!("IMAGE_TEMP_WRITE_FAILED: {e}"),
+            ));
         }
+        image_mime = Some(img.mime_type.clone());
+        image_path = Some(path);
     }
 
     // Decode base64 file to temp file
@@ -299,23 +310,17 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
                     file_path = Some(path);
                 }
                 Err(e) => {
-                    return Json(SendResult {
-                        success: false,
-                        error: Some(format!("Failed to write temp file: {e}")),
-                        confirmed: None,
-                        local_id: None,
-                        confirmation_method: None,
-                    });
+                    return Json(send_error(
+                        "UPLOAD_FAILED",
+                        format!("Failed to write temp file: {e}"),
+                    ));
                 }
             },
             Err(e) => {
-                return Json(SendResult {
-                    success: false,
-                    error: Some(format!("Failed to decode base64 file data: {e}")),
-                    confirmed: None,
-                    local_id: None,
-                    confirmation_method: None,
-                });
+                return Json(send_error(
+                    "UPLOAD_FAILED",
+                    format!("Failed to decode base64 file data: {e}"),
+                ));
             }
         }
     }
@@ -329,6 +334,15 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
     let chat_id_for_confirm = input.chat_id.clone();
     let session_id_for_confirm = context.session.id.clone();
     let logged_in_user_for_confirm = context.session.logged_in_user.clone();
+    let keys_for_confirm = {
+        let db = get_db();
+        get_stored_keys(&db, &session_id_for_confirm, &logged_in_user)
+    };
+    let baseline_before_send = wechat_messages::get_latest_self_local_id(
+        &logged_in_user,
+        &keys_for_confirm,
+        &chat_id_for_confirm,
+    );
 
     let plan = SendMessagePlan;
     let params = SendMessageParams {
@@ -337,6 +351,7 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         image_path: image_path.clone(),
         image_mime,
         file_path: file_path.clone(),
+        readonly,
     };
     let cancel = CancellationToken::new();
     let noop_emit = |_: SubscriptionEvent| {};
@@ -359,33 +374,23 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
 
     if result.success {
         let logged_in_user = logged_in_user_for_confirm.as_deref().unwrap_or_default();
-        let keys = {
-            let db = get_db();
-            get_stored_keys(&db, &session_id_for_confirm, logged_in_user)
-        };
-
-        // Read baseline: latest self-message localId before send
-        let baseline = wechat_messages::get_latest_self_local_id(
-            logged_in_user,
-            &keys,
-            &chat_id_for_confirm,
-        );
-
-        if let Some(baseline_id) = baseline {
+        if let Some(baseline_id) = baseline_before_send {
             tracing::info!(
                 "[send-confirm] Pre-send baseline: chat={} baseline_self_id={}",
-                chat_id_for_confirm, baseline_id
+                chat_id_for_confirm,
+                baseline_id
             );
 
             // Poll DB for new self message
             let new_id = wechat_messages::poll_db_for_new_self_message(
                 logged_in_user,
-                &keys,
+                &keys_for_confirm,
                 &chat_id_for_confirm,
                 baseline_id,
-                10, // attempts
+                10,  // attempts
                 300, // interval_ms
-            ).await;
+            )
+            .await;
 
             if let Some(confirmed_id) = new_id {
                 confirmed = Some(true);
@@ -415,7 +420,15 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
 
     Json(SendResult {
         success: result.success,
-        error: result.error,
+        code: result
+            .error
+            .as_ref()
+            .and_then(|e| e.split_once(':').map(|(code, _)| code.trim().to_string())),
+        error: result.error.map(|e| {
+            e.split_once(':')
+                .map(|(_, message)| message.trim().to_string())
+                .unwrap_or(e)
+        }),
         confirmed,
         local_id,
         confirmation_method,

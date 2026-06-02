@@ -56,11 +56,15 @@ static CACHE: Mutex<ChatSelectionCache> = Mutex::new(ChatSelectionCache {
 /// Designed for future replacement by a persistent daemon/service
 /// that avoids per-call Frida attach/detach overhead.
 pub trait ChatSelectionBackend: Send + Sync {
-    fn list_sessions(&self, exec_options: ExecOptions)
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = SessionEnumeration> + Send>>;
+    fn list_sessions(
+        &self,
+        exec_options: ExecOptions,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SessionEnumeration> + Send>>;
 
-    fn current_selection(&self, exec_options: ExecOptions)
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>;
+    fn current_selection(
+        &self,
+        exec_options: ExecOptions,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>;
 
     fn select_chat(
         &self,
@@ -75,9 +79,10 @@ pub trait ChatSelectionBackend: Send + Sync {
 pub struct SubprocessChatSelection;
 
 impl ChatSelectionBackend for SubprocessChatSelection {
-    fn list_sessions(&self, exec_options: ExecOptions)
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = SessionEnumeration> + Send>>
-    {
+    fn list_sessions(
+        &self,
+        exec_options: ExecOptions,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SessionEnumeration> + Send>> {
         Box::pin(async move {
             let result = exec_command("chat-select", &["--list"], &exec_options).await;
 
@@ -101,13 +106,16 @@ impl ChatSelectionBackend for SubprocessChatSelection {
         })
     }
 
-    fn current_selection(&self, exec_options: ExecOptions)
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>
-    {
+    fn current_selection(
+        &self,
+        exec_options: ExecOptions,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>> {
         // Check cache first (sync, no await)
         let cached_sel = {
             let cache = CACHE.lock().unwrap();
-            cache.enumeration.as_ref()
+            cache
+                .enumeration
+                .as_ref()
                 .filter(|e| e.captured_at.elapsed() < cache.ttl)
                 .and_then(|e| e.current_sel.clone())
         };
@@ -130,8 +138,7 @@ impl ChatSelectionBackend for SubprocessChatSelection {
         force: bool,
         click_xy: Option<(f64, f64)>,
         exec_options: ExecOptions,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = OpenChatResult> + Send>>
-    {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = OpenChatResult> + Send>> {
         let pid = get_current_wechat_pid();
 
         // Check cache (sync, no await)
@@ -139,8 +146,15 @@ impl ChatSelectionBackend for SubprocessChatSelection {
             let cache = CACHE.lock().unwrap();
             // 1. Same-target last_open skip
             if let Some(entry) = &cache.last_open {
-                if entry.chat_id == chat_id && entry.pid == pid && entry.result.ok && entry.at.elapsed() < cache.ttl {
-                    tracing::info!("[chat-select] cache hit: same target '{}' within TTL", chat_id);
+                if entry.chat_id == chat_id
+                    && entry.pid == pid
+                    && entry.result.ok
+                    && entry.at.elapsed() < cache.ttl
+                {
+                    tracing::info!(
+                        "[chat-select] cache hit: same target '{}' within TTL",
+                        chat_id
+                    );
                     return Box::pin(std::future::ready(entry.result.clone()));
                 }
             }
@@ -148,7 +162,10 @@ impl ChatSelectionBackend for SubprocessChatSelection {
             if let Some(e) = &cache.enumeration {
                 if e.pid == pid && e.captured_at.elapsed() < cache.ttl {
                     if e.current_sel.as_deref() == Some(chat_id.as_str()) {
-                        tracing::info!("[chat-select] cache hit: current_sel='{}' matches target", chat_id);
+                        tracing::info!(
+                            "[chat-select] cache hit: current_sel='{}' matches target",
+                            chat_id
+                        );
                         let result = OpenChatResult {
                             ok: true,
                             username: Some(chat_id.clone()),
@@ -162,7 +179,10 @@ impl ChatSelectionBackend for SubprocessChatSelection {
             }
         }
 
-        tracing::info!("[chat-select] cache miss: calling subprocess for '{}'", chat_id);
+        tracing::info!(
+            "[chat-select] cache miss: calling subprocess for '{}'",
+            chat_id
+        );
 
         Box::pin(async move {
             let mut args: Vec<String> = Vec::new();
@@ -248,7 +268,10 @@ pub async fn list_sessions(exec_options: &ExecOptions) -> SessionEnumeration {
         let cache = CACHE.lock().unwrap();
         if let Some(e) = &cache.enumeration {
             if e.pid == pid && e.captured_at.elapsed() < cache.ttl {
-                tracing::info!("[chat-select] enumeration cache hit: {} sessions", e.sessions.len());
+                tracing::info!(
+                    "[chat-select] enumeration cache hit: {} sessions",
+                    e.sessions.len()
+                );
                 return e.clone();
             }
         }
@@ -264,7 +287,9 @@ pub async fn list_sessions(exec_options: &ExecOptions) -> SessionEnumeration {
 
 /// Get the currently selected chat, using cache when available.
 pub async fn current_selection(exec_options: &ExecOptions) -> Option<String> {
-    DEFAULT_BACKEND.current_selection(exec_options.clone()).await
+    DEFAULT_BACKEND
+        .current_selection(exec_options.clone())
+        .await
 }
 
 /// Invalidate the chat-selection cache (e.g. after WeChat restart).
@@ -280,7 +305,10 @@ fn extract_log_field(stderr: &str, prefix: &str) -> String {
         if let Some(idx) = line.find(prefix) {
             let rest = &line[idx + prefix.len()..];
             let value = rest.split_whitespace().next().unwrap_or(rest);
-            return value.trim_end_matches(',').trim_end_matches('.').to_string();
+            return value
+                .trim_end_matches(',')
+                .trim_end_matches('.')
+                .to_string();
         }
     }
     String::new()
@@ -312,7 +340,10 @@ fn get_current_wechat_pid() -> String {
     ] {
         if let Ok(output) = Command::new(cmd[0]).args(&cmd[1..]).output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let pids: Vec<i64> = stdout.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+            let pids: Vec<i64> = stdout
+                .split_whitespace()
+                .filter_map(|s| s.parse().ok())
+                .collect();
 
             let mut best_pid: Option<i64> = None;
             let mut best_fd_count = 0;

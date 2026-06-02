@@ -27,6 +27,10 @@ pub trait Plan: Send + Sync {
 
     fn is_goal_reached(&self, state: &AppState, plan_state: &Self::PlanState) -> bool;
 
+    fn stuck_error(&self, _plan_state: &Self::PlanState) -> Option<(String, String)> {
+        None
+    }
+
     async fn select_action(
         &self,
         state: &AppState,
