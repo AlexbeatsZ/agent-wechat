@@ -125,7 +125,7 @@ RUN useradd -m -s /bin/bash wechat
 # ============================================
 RUN mkdir -p /opt/tools
 COPY tools/ /opt/tools/
-RUN chmod +x /opt/tools/*
+RUN sed -i 's/\r$//' /opt/tools/* && chmod +x /opt/tools/*
 
 # ============================================
 # Copy Rust binary from builder
@@ -158,7 +158,7 @@ ENV AGENT_PORT=6174
 # Entrypoint
 # ============================================
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 EXPOSE 6174 1234
 
