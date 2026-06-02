@@ -1,0 +1,17 @@
+FROM agent-wechat:deploy-07bcc61
+
+WORKDIR /app
+
+COPY apps/web/dist ./apps/web/dist
+COPY deploy_server.py ./deploy_server.py
+
+ENV HOST=0.0.0.0
+ENV PORT=3001
+ENV WEB_ROOT=/app/apps/web/dist
+ENV AGENT_WECHAT_BASE_URL=http://host.docker.internal:6174
+ENV AGENT_WECHAT_TOKEN_FILE=/run/secrets/agent-wechat-token
+
+EXPOSE 3001
+
+ENTRYPOINT []
+CMD ["python3", "/app/deploy_server.py"]
