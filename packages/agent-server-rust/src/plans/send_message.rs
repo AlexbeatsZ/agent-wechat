@@ -213,9 +213,7 @@ impl Plan for SendMessagePlan {
 
                     // File
                     if let Some(fp) = &params.file_path {
-                        let result =
-                            exec_command("paste-file", &[fp, "--send"], &ExecOptions::default())
-                                .await;
+                        let result = exec_command("paste-file", &[fp, "--send"], exec_options).await;
                         if result.exit_code != 0 {
                             tracing::warn!("[send_message] paste-file failed: {}", result.stderr);
                             return None;
@@ -236,8 +234,7 @@ impl Plan for SendMessagePlan {
                             args.push(mime);
                         }
                         args.push("--send");
-                        let result =
-                            exec_command("paste-image", &args, &ExecOptions::default()).await;
+                        let result = exec_command("paste-image", &args, exec_options).await;
                         if result.exit_code != 0 {
                             tracing::warn!("[send_message] paste-image failed: {}", result.stderr);
                             return None;
@@ -253,8 +250,7 @@ impl Plan for SendMessagePlan {
 
                     // Text
                     if let Some(msg) = &params.message {
-                        let result =
-                            exec_command("send-text", &[msg], &ExecOptions::default()).await;
+                        let result = exec_command("send-text", &[msg], exec_options).await;
                         if result.exit_code != 0 {
                             tracing::warn!("[send_message] send-text failed: {}", result.stderr);
                             return None;
