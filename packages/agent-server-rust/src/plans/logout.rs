@@ -1,6 +1,7 @@
 use super::Plan;
 use crate::ia::actions::{click_bounds, wait_short};
 use crate::ia::types::*;
+use crate::tools::exec::ExecOptions;
 
 pub struct LogoutPlan;
 
@@ -26,7 +27,7 @@ impl Plan for LogoutPlan {
         identified: &IdentifiedStates,
         _plan_state: &mut (),
         _a11y: &A11yNode,
-        _session_id: &str,
+        _exec_options: &ExecOptions,
     ) -> Option<SelectedAction> {
         let settings_frame = identified.settings.as_ref().and_then(|s| s.frame.clone());
         let main_frame = identified.main_window.as_ref().and_then(|m| m.frame.clone());

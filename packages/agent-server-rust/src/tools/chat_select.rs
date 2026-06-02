@@ -17,10 +17,14 @@ pub struct OpenChatResult {
 /// Open a chat in the WeChat UI using the chat-select tool.
 ///
 /// Args format: chat-select [--force] [--click-xy X Y] <username>
+///
+/// Uses the provided ExecOptions to ensure the correct DISPLAY/DBUS/HOME
+/// environment for the target session, avoiding multi-session mismatches.
 pub async fn open_chat(
     chat_id: &str,
     force: bool,
     click_xy: Option<(f64, f64)>,
+    exec_options: &ExecOptions,
 ) -> OpenChatResult {
     let mut args: Vec<String> = Vec::new();
 
@@ -42,7 +46,7 @@ pub async fn open_chat(
     let result = exec_command(
         "chat-select",
         &args_ref,
-        &ExecOptions::default(),
+        exec_options,
     )
     .await;
 

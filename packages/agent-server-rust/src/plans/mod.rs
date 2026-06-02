@@ -5,6 +5,7 @@ pub mod logout;
 pub mod send_message;
 
 use crate::ia::types::{A11yNode, AppState, IdentifiedStates, SelectedAction};
+use crate::tools::exec::ExecOptions;
 
 /// Plan trait — defines a goal-oriented sequence of actions.
 ///
@@ -33,6 +34,6 @@ pub trait Plan: Send + Sync {
         identified: &IdentifiedStates,
         plan_state: &mut Self::PlanState,
         a11y: &A11yNode,
-        session_id: &str,
+        exec_options: &ExecOptions,
     ) -> Option<SelectedAction>;
 }

@@ -2,6 +2,7 @@ use super::Plan;
 use crate::ia::actions;
 use crate::ia::selectors::{query_selector, query_selector_all};
 use crate::ia::types::*;
+use crate::tools::exec::ExecOptions;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
 
 pub struct ChatOpenPlan;
@@ -87,7 +88,7 @@ impl Plan for ChatOpenPlan {
         identified: &IdentifiedStates,
         plan_state: &mut ChatOpenPlanState,
         a11y: &A11yNode,
-        _session_id: &str,
+        exec_options: &ExecOptions,
     ) -> Option<SelectedAction> {
         // Dismiss popups
         if state.popup.is_some() && identified.popup.is_some() {
@@ -121,7 +122,7 @@ impl Plan for ChatOpenPlan {
                     });
 
                     let force = main_state_id == Some("chat");
-                    let result = open_chat(&params.chat_id, force, click_xy).await;
+                    let result = open_chat(&params.chat_id, force, click_xy, exec_options).await;
 
                     if !result.ok {
                         plan_state.result = Some(result);

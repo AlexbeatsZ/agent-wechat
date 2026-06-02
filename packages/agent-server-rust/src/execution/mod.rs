@@ -60,8 +60,6 @@ where
     let _health_guard = ResumeOnDrop;
 
     let mut plan_state = plan.initial_plan_state();
-    let session_id = context.session_id.clone();
-
     let exec_options = ExecOptions {
         session: Some(context.session.clone()),
         timeout_ms: 60_000,
@@ -242,7 +240,7 @@ where
                 &identified,
                 &mut plan_state,
                 &a11y,
-                &session_id,
+                &exec_options,
             )
             .await;
 

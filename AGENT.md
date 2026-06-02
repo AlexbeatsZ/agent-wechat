@@ -65,7 +65,7 @@ The login flow uses a **deterministic FSM** instead of an LLM. This is faster, c
 | Concept | Location | Purpose |
 |---------|----------|---------|
 | **IAState** | `src/ia/states/*.rs` | View state: identify from a11y, reduce to AppState, available commands |
-| **Effects** | `src/effects/mod.rs` | Reactive side effects that fire on state change |
+| **Effects** | `src/effects/mod.rs` | DEPRECATED: currently unused — all emissions handled by plans |
 | **Commands** | `src/ia/states/*.rs` | Per-state UI operations (click, type, scroll, wait) |
 | **Base Commands** | `src/ia/states/base.rs` | Shared commands (maximize, minimize, close) |
 | **Plan** | `src/plans/*.rs` | Goal + action selection logic |
@@ -80,10 +80,10 @@ All paths above are relative to `packages/agent-server-rust/`.
 ┌──────────────────────────────────────────────────────────────┐
 │                    Execution Loop                             │
 │                                                               │
-│  1. OBSERVE    → a11y tree + screenshot (with parent refs)    │
+│  1. OBSERVE    → a11y tree + screenshot (when plan needs it)     │
 │  2. IDENTIFY   → find IAState, get metadata (e.g., frame)     │
 │  3. REDUCE     → iaState.reduce(prev, obs, metadata) → state  │
-│  4. EFFECTS    → watchers(prev, next) → Effect[] (on change)  │
+│  4. EFFECTS    → (deprecated, always empty)                    │
 │  5. PERSIST    → save AppState to SQLite                      │
 │  6. SELECT     → plan.select_action(state) → action key       │
 │  7. EXECUTE    → run command (scoped to frame if available)   │
@@ -125,7 +125,7 @@ enum Action {
 
 **Effects** (`src/effects/mod.rs`):
 
-Currently empty — all login emissions (QR, phone_confirm, login_success, status) are handled directly by the login plan via `plan_state` to ensure proper sequencing.
+DEPRECATED — `collect_effects()` always returns an empty Vec. All emissions (QR, phone_confirm, login_success, status) are handled directly by the login plan via `plan_state` to ensure proper sequencing. This module exists as a placeholder for future reactive side-effect architecture.
 
 **Plans** (`src/plans/login.rs`):
 
@@ -199,8 +199,8 @@ query_selector(&a11y, "push-button[name=\"Log In\"]")
 query_selector(&a11y, "list[name=\"Chats\"] > list-item:nth-child(1)")
 query_selector(&a11y, "push-button[name=/OK|Confirm|确定/i]")  // regex
 
-// Traverse up (a11y nodes have parent refs)
-find_ancestor(&button, "frame")  // Find containing frame
+// NOTE: parent refs removed — ancestor traversal is done via recursive tree walk
+// (find_edit_send_pair searches children for pattern matching)
 ```
 
 ## Tool Scripts (in container at /opt/tools/)
@@ -332,7 +332,7 @@ Environment variable `AGENT_WECHAT_TOKEN` overrides the token file on both host 
 | State management | Redux-like (reduce → effects) | Pure reducers, reactive effects on state diff |
 | Commands | Per-state (not global) | Each state defines available commands |
 | Execution order | Action → Goal check | Allows final actions before completion |
-| A11y tree | Parent refs added | Enables `find_ancestor` for frame scoping |
+| A11y tree | Tree-based recursive traversal | `find_edit_send_pair` searches children; no parent refs (removed) |
 | A11y selectors | CSS-like syntax | Familiar, composable |
 | Context | Persisted to SQLite | Survives restarts |
 | select_action | Async | Plans can await tool calls without blocking |
@@ -418,7 +418,7 @@ Image `.dat` files use a two-layer encoding: AES-128-ECB for the header and sing
 - [x] Direct WeChat DB reads (session.db, contact.db, message_N.db)
 - [x] Smart credential management (verify existing, only re-extract when needed)
 - [x] Context persistence to SQLite
-- [x] Parent refs in a11y tree + find_ancestor helper
+- [x] Tree-based recursive traversal (find_edit_send_pair searches children; parent refs removed as unused)
 - [x] Frame-scoped click/type actions
 - [x] Per-state commands with shared base (window controls)
 - [x] Plan-local state for execution-scoped data

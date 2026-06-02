@@ -1161,7 +1161,11 @@ pub fn get_message_media(
             get_voice_data(account_dir, keys, chat_id, local_id)
         }
         47 => {
-            // Emoji — CDN URL is included in message content, not a downloadable media
+            // Emoji — CDN URL from emoticon.db (see get_emoji_media).
+            // Currently returns URL-only media which the OpenClaw monitor does not handle
+            // (it checks result.data but ignores result.url).
+            // TODO: Either connect get_emoji_media to return CDN URL with reason=cdn_only,
+            //       or have the monitor download URL-only media, or mark reason explicitly.
             unsupported()
         }
         _ => {

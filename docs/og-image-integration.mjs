@@ -1,15 +1,34 @@
 import satori from 'satori';
 import sharp from 'sharp';
-import { readFileSync, readdirSync, statSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { resolve, dirname } from 'path';
 
 export const OG_WIDTH = 1200;
 export const OG_HEIGHT = 630;
 
-const fontRegular = readFileSync('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf');
-const fontBold = readFileSync('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf');
-const fontMono = readFileSync('/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf');
+function readFirstExisting(paths) {
+  const path = paths.find((candidate) => existsSync(candidate));
+  if (!path) {
+    throw new Error(`No usable OG image font found. Checked: ${paths.join(', ')}`);
+  }
+  return readFileSync(path);
+}
+
+const fontRegular = readFirstExisting([
+  '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+  'C:/Windows/Fonts/arial.ttf',
+]);
+const fontBold = readFirstExisting([
+  '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+  'C:/Windows/Fonts/arialbd.ttf',
+]);
+const fontMono = readFirstExisting([
+  '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf',
+  'C:/Windows/Fonts/consola.ttf',
+  'C:/Windows/Fonts/cour.ttf',
+  'C:/Windows/Fonts/arial.ttf',
+]);
 
 function ogTemplate(title, description, isRoot = false) {
   return {

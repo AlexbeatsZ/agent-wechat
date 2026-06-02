@@ -30,19 +30,9 @@ pub struct SendMessagePlanState {
 }
 
 fn find_edit_and_send_button(a11y: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
-    let send_btn = query_selector(a11y, r#"push-button[name="Send(S)"]"#)?;
-    // Find sibling EDITABLE text node via parent
-    // Since we don't have parent refs in the tree-based approach,
-    // we search the tree for the pattern
-    find_edit_near_send(a11y, send_btn)
-}
-
-fn find_edit_near_send<'a>(
-    root: &'a A11yNode,
-    _send_btn: &A11yNode,
-) -> Option<(&'a A11yNode, &'a A11yNode)> {
-    // Walk tree looking for a parent that has both an EDITABLE text and Send(S) button
-    find_edit_send_pair(root)
+    // Search the tree for a parent that has both an EDITABLE text and Send(S) button.
+    // Tree-based recursive traversal (no parent refs available).
+    find_edit_send_pair(a11y)
 }
 
 fn find_edit_send_pair(node: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
@@ -104,7 +94,7 @@ impl Plan for SendMessagePlan {
         identified: &IdentifiedStates,
         plan_state: &mut SendMessagePlanState,
         a11y: &A11yNode,
-        _session_id: &str,
+        exec_options: &ExecOptions,
     ) -> Option<SelectedAction> {
         let main_state_id = identified.main_window.as_ref().map(|m| m.state_id.as_str());
 
@@ -156,7 +146,7 @@ impl Plan for SendMessagePlan {
                     });
 
                     let force = main_state_id == Some("chat");
-                    let result = open_chat(&params.chat_id, force, click_xy).await;
+                    let result = open_chat(&params.chat_id, force, click_xy, exec_options).await;
 
                     if !result.ok {
                         return None;

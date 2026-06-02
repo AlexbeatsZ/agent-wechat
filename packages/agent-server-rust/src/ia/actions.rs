@@ -34,7 +34,7 @@ pub fn minimize() -> Action {
 
 pub fn close_window() -> Action {
     Action::ClickSelector {
-        selector: r#"tool-bar push-button[name="Disable"]"#.to_string(),
+        selector: r#"tool-bar push-button[name="Close"]"#.to_string(),
     }
 }
 

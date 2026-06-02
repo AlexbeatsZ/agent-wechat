@@ -3,21 +3,10 @@ use crate::ia::types::A11yNode;
 
 const A11Y_SCRIPT_PATH: &str = "/opt/tools/a11y-dump";
 
-/// Add parent index references to all nodes in the tree.
-/// This enables traversal up the tree via find_ancestor.
-fn add_parent_refs(node: &mut A11yNode, _parent_index: Option<usize>) {
-    // Parent refs are set during flattening if needed.
-    // For the tree-based approach, we skip parent indices
-    // and rely on the recursive tree structure.
-    if let Some(children) = &mut node.children {
-        for child in children.iter_mut() {
-            add_parent_refs(child, None);
-        }
-    }
-}
-
 /// Get the desktop accessibility tree as a nested structure.
 /// Uses the Python a11y-dump script.
+/// NOTE: Ancestor traversal is done via recursive tree walk (find_edit_send_pair, selectors),
+/// not via parent_index back-links. A11yNode.parent_index was removed as it was never populated.
 pub async fn get_a11y_desktop(
     options: &ExecOptions,
 ) -> Result<A11yNode, String> {
@@ -32,10 +21,9 @@ pub async fn get_a11y_desktop(
         return Err(result.stderr.clone().or_if_empty(&result.stdout));
     }
 
-    let mut tree: A11yNode =
+    let tree: A11yNode =
         serde_json::from_str(&result.stdout).map_err(|e| format!("Failed to parse a11y: {e}"))?;
 
-    add_parent_refs(&mut tree, None);
     Ok(tree)
 }
 

@@ -33,9 +33,6 @@ pub struct A11yNode {
     pub bounds: Option<Bounds>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<A11yNode>>,
-    /// Parent is not serialized — set via add_parent_refs after deserialization
-    #[serde(skip)]
-    pub parent_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<A11yWindowInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -274,9 +271,11 @@ pub struct IdentifiedStates {
 }
 
 // ============================================
-// Effects — internal only
+// Effects — DEPRECATED (unused, collect_effects always returns empty)
 // ============================================
 
+/// DEPRECATED: Effect system is currently unused. All emissions are handled
+/// directly by plans. This enum exists as a placeholder for future architecture.
 pub enum Effect {
     Emit { event: SubscriptionEvent },
 }
@@ -288,18 +287,6 @@ pub enum Effect {
 pub struct SelectedAction {
     pub action: Action,
     pub frame: Option<FrameHint>,
-}
-
-// ============================================
-// Execution status — internal only
-// ============================================
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExecutionStatus {
-    Running,
-    Succeeded,
-    Failed,
-    Aborted,
 }
 
 // ============================================

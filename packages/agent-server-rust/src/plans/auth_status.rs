@@ -1,5 +1,6 @@
 use super::Plan;
 use crate::ia::types::*;
+use crate::tools::exec::ExecOptions;
 
 pub struct AuthStatusPlan;
 
@@ -27,7 +28,7 @@ impl Plan for AuthStatusPlan {
         _identified: &IdentifiedStates,
         _plan_state: &mut (),
         _a11y: &A11yNode,
-        _session_id: &str,
+        _exec_options: &ExecOptions,
     ) -> Option<SelectedAction> {
         None
     }

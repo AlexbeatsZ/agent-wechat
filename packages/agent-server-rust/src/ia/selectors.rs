@@ -2,32 +2,6 @@ use super::types::A11yNode;
 use regex::Regex;
 
 // ============================================
-// Ancestor Traversal
-// ============================================
-
-/// Find an ancestor node matching a role name.
-/// Uses parent_index to walk up the flattened tree.
-pub fn find_ancestor_by_role<'a>(
-    node: &'a A11yNode,
-    role: &str,
-    all_nodes: &'a [A11yNode],
-) -> Option<&'a A11yNode> {
-    let mut current_idx = node.parent_index;
-    while let Some(idx) = current_idx {
-        if idx < all_nodes.len() {
-            let parent = &all_nodes[idx];
-            if parent.role == role {
-                return Some(parent);
-            }
-            current_idx = parent.parent_index;
-        } else {
-            break;
-        }
-    }
-    None
-}
-
-// ============================================
 // Selector AST Types
 // ============================================
 
@@ -451,7 +425,6 @@ mod tests {
             name: name.into(),
             bounds: None,
             children,
-            parent_index: None,
             window: None,
             states: None,
         }

@@ -2,6 +2,7 @@ use super::Plan;
 use crate::db::{get_db, queries};
 use crate::ia::actions;
 use crate::ia::types::*;
+use crate::tools::exec::ExecOptions;
 use crate::tools::wechat_db::{find_account_dir, find_wechat_pid};
 use crate::tools::wechat_keys::{extract_keys_async, needs_key_extraction, store_keys};
 use rusqlite::params;
@@ -62,8 +63,13 @@ impl Plan for LoginPlan {
         identified: &IdentifiedStates,
         plan_state: &mut LoginPlanState,
         _a11y: &A11yNode,
-        session_id: &str,
+        exec_options: &ExecOptions,
     ) -> Option<SelectedAction> {
+        let session_id = exec_options
+            .session
+            .as_ref()
+            .map(|s| s.id.as_str())
+            .unwrap_or_default();
         let frame = || identified.main_window.as_ref().and_then(|m| m.frame.clone());
 
         // Dismiss popups first
