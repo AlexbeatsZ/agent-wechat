@@ -1,4 +1,4 @@
-FROM agent-wechat:deploy-07bcc61
+FROM agent-wechat:deploy-local
 
 WORKDIR /app
 

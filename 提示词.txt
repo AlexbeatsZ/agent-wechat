@@ -1,0 +1,1345 @@
+# P0：总控目标提示词
+
+
+```
+你现在要长期重构并优化这个仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+请先建立全局目标，不要立刻做大规模修改。
+
+这个项目的本质不是 OCR，也不是网页 DOM 自动化，而是：
+
+- Docker 内运行 Linux WeChat；
+- 用 Xvfb + AT-SPI accessibility + screenshot 观察 UI；
+- 用 Rust/Axum server 暴露 REST/WebSocket；
+- 用 deterministic FSM 操作微信 UI；
+- 聊天、消息、媒体主要通过读取微信本地数据库获得；
+- OpenClaw extension 负责 monitor、inbound/outbound、消息分发。
+
+我希望进行一次“彻底的逻辑重构和性能/可靠性优化”，但必须分阶段做，不能一次性大爆炸式重写。
+
+总目标：
+
+1. 发送消息显著降延迟；
+2. 当前已打开聊天发送时不再走重型 chat-select / Frida；
+3. 普通发送流程减少不必要 screenshot、subprocess、FSM step；
+4. 媒体/文件读取路径更可靠，失败原因可诊断；
+5. unread 红点、lastSeen、agent 已处理状态分离，避免重复响应；
+6. 多 session / DISPLAY / DBUS 路径不再隐式使用默认环境；
+7. 清理半废弃、未接通、误导性代码；
+8. 保持外部 API 尽量兼容；
+9. 每阶段都有测试和可回滚边界。
+
+核心验收条件：
+
+A. 发送性能：
+- 给当前已打开聊天发送文本时，不应触发 chat-select.py；
+- SendMessagePlan / ChatOpenPlan 不应每一步 capture screenshot；
+- 文本发送应尽量减少 subprocess 次数；
+- 发送后应有更可靠确认，不仅仅依赖 Send(S) disabled。
+
+B. 媒体/文件：
+- message_1.db、message_2.db、media_1.db 等分片数据库路径必须正确；
+- getMedia 返回必须能区分 pending、unsupported、missing_key、path_not_found、decrypt_failed、not_downloaded 等原因；
+- OpenClaw monitor 不能对不可重试失败盲目重试；
+- URL-only media 要么被正确处理，要么明确标记 unsupported/reason。
+
+C. unread/红点：
+- openChat 失败后，monitor 不能继续处理该 chat；
+- unreadChats 过滤必须结合 lastMsgLocalId 和 lastSeenId，避免同一消息重复触发；
+- lastSeenId 必须持久化，插件/服务重启后不能重复处理旧消息；
+- openChat(clearUnreads=true) 后应该轮询确认 unreadCount 是否真的清零，并把“微信 UI 已读”和“agent 已处理”分开记录。
+
+D. 代码结构：
+- router handler 不要塞太多业务逻辑；
+- UI 自动化、chat selection、DB 读取、media resolve、monitor state 应逐步拆成 service；
+- 删除或修正半废弃功能，例如无效 parent refs、未使用参数、未接通 get_emoji_media、只存在但 monitor 不处理的 MediaResult.url；
+- 所有 UI tool 调用应该显式使用当前 session ExecOptions，不要偷偷用 ExecOptions::default() 导致多 session 隐患。
+
+请你先完成以下输出，不要改代码：
+
+1. 画出当前核心执行链路：
+- send text
+- send file/image
+- open chat
+- list chats
+- list messages
+- get media
+- OpenClaw monitor process unread chat
+
+2. 列出你认为的重构阶段，每阶段控制在一个可 review 的 PR 范围内。
+
+3. 列出每阶段的风险点和测试方式。
+
+4. 明确哪些地方你认为是：
+- 性能瓶颈；
+- 可靠性 bug；
+- 设计债务；
+- 半废弃/未接通代码；
+- 可以安全删除或重命名的代码。
+
+本轮只分析，不修改。
+```
+
+---
+
+# P1：低风险清理与事实校准
+
+这一阶段让它先清理明显错位的东西，不改大逻辑。
+
+```
+继续处理仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+现在只做第一阶段：低风险清理与事实校准。不要做大规模重构，不要改外部 API。
+
+目标：
+
+1. 找出文档、注释、类型和实际实现不一致的地方；
+2. 清理明显无效参数、误导性注释、半废弃代码；
+3. 不改变核心行为；
+4. 为后续重构降低认知噪声。
+
+重点检查：
+
+- `AGENT.md`
+- `README.md`
+- `packages/agent-server-rust/src/tools/a11y.rs`
+- `packages/agent-server-rust/src/ia/types.rs`
+- `packages/agent-server-rust/src/plans/send_message.rs`
+- `packages/agent-server-rust/src/plans/chat_open.rs`
+- `packages/agent-server-rust/src/tools/wechat_media.rs`
+- `docker/tools/chat-select.py`
+
+请重点处理这些已知问题：
+
+### 1. a11y parent refs 文档/实现不一致
+
+`A11yNode` 里有 `parent_index`，文档可能说 parent refs 已添加，但当前 `a11y.rs::add_parent_refs` 实际没有设置 parent refs，只是递归跳过。
+
+请选择一种低风险方案：
+
+- 要么删除/弱化误导性注释和文档，明确当前是 tree-based recursive traversal；
+- 要么真正实现 parent refs。
+
+本阶段建议优先只修正文档和注释，不做 arena 大重构。
+
+### 2. 删除无用参数
+
+`send_message.rs` 中类似 `find_edit_near_send(_send_btn)` 这种参数没有使用。请删除无用参数，简化函数签名，不改变行为。
+
+### 3. 处理 `get_emoji_media`
+
+`wechat_media.rs` 里如果存在 `get_emoji_media()`，但公共入口对 type 47 直接返回 unsupported，则这是未接通功能。
+
+本阶段不要急着重写 media pipeline，请先：
+
+- 明确它是否死代码；
+- 要么接上最小路径；
+- 要么标记 TODO/deprecated；
+- 如果接上风险很小，可以把 type 47 分支改为调用它；
+- 如果接上需要 monitor 支持 URL，先不要改 monitor，只加注释说明 URL-only media 目前上层未完整处理。
+
+### 4. 修正明显过时的文档
+
+README/AGENT 中不要继续暗示当前没有实现的能力，例如 parent refs、effects 等。
+
+### 5. 不要改核心行为
+
+本阶段不处理：
+
+- 发送性能；
+- MediaResult 结构；
+- unread 持久化；
+- chat-select cache；
+- 大的 service 拆分。
+
+输出要求：
+
+1. 先列出你发现的不一致点；
+2. 再给最小修改计划；
+3. 修改代码；
+4. 运行：
+- `cargo check`，如果能运行；
+- `pnpm typecheck`，如果能运行；
+5. 输出修改文件列表、行为是否改变、风险点。
+
+验收：
+
+- 编译不破；
+- 无用参数减少；
+- 文档不再误导；
+- 没有大规模行为变更。
+```
+
+---
+
+# P2：数据库路径与 key 可靠性修复
+
+这一阶段优先修“文件/媒体查不到”的底层基础。```
+继续处理仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+现在只做第二阶段：修复 WeChat DB 路径映射和媒体 key 确保逻辑。
+
+不要改发送 FSM，不要改 monitor，不要做大规模 media pipeline 重构。
+
+背景：
+
+当前媒体/消息读取依赖微信本地数据库，例如：
+
+- session.db
+- contact.db
+- message_0.db / message_1.db / ...
+- media_0.db / media_1.db / ...
+- message_resource.db
+- hardlink.db
+- emoticon.db
+
+我怀疑 `get_db_path` 对分片数据库路径映射不完整，导致 message_1.db、media_1.db 等找错路径，从而很多消息/语音/媒体查不到。
+
+重点文件：
+
+- `packages/agent-server-rust/src/tools/wechat_db.rs`
+- `packages/agent-server-rust/src/router/messages.rs`
+- `packages/agent-server-rust/src/router/chats.rs`
+- `packages/agent-server-rust/src/tools/wechat_keys.rs`
+- `packages/agent-server-rust/src/tools/wechat_messages.rs`
+- `packages/agent-server-rust/src/tools/wechat_media.rs`
+
+任务 1：重构 DB 子目录映射
+
+在 `wechat_db.rs` 中抽出函数：
+
+```rustpub fn get_db_subdir(db_name: &str) -> &str
+
+```
+
+
+它应该正确处理：
+
+
+- `contact.db`, `contact_fts.db` → `contact`
+- `session.db` → `session`
+- `message_0.db`, `message_1.db`, `message_99.db` → `message`
+- `message_fts.db` → `message`
+- `message_resource.db` → `message`
+- `media_0.db`, `media_1.db`, `media_99.db` → `message`
+- `biz_message_0.db`, `biz_message_1.db` → `message`
+- `general.db` → `general`
+- `hardlink.db` → `hardlink`
+- `head_image.db` → `head_image`
+- `emoticon.db` → `emoticon`
+- `favorite.db`, `favorite_fts.db` → `favorite`
+- `sns.db` → `sns`
+- `bizchat.db` → `bizchat`
+- 未知 db 保持原有 fallback。
+
+
+然后让 `get_db_path` 使用 `get_db_subdir`。
+
+
+任务 2：加单元测试
+
+
+在 Rust tests 中验证至少这些输入：
+
+
+- `message_0.db`
+- `message_1.db`
+- `message_99.db`
+- `media_0.db`
+- `media_1.db`
+- `message_resource.db`
+- `hardlink.db`
+- `contact.db`
+- `session.db`
+- `emoticon.db`
+
+
+任务 3：统一 lazy key extraction
+
+
+目前 listMessages/getMedia/listChats 里可能各自做 key 检查。请先不要大重构，但可以抽出 helper：
+
+
+```
+
+ensure_keys_for_existing_dbs(...)
+
+```
+
+
+要求：
+
+
+- 扫描账号目录里实际存在的 DB；
+- 如果 keys 中缺失已存在的重要 DB，就调用 `extract_keys_async(pid)`；
+- 保存 key 后重新读取；
+- 不要每次请求都无脑提取；
+- 日志输出 missing db names。
+
+
+本阶段至少要让 getMedia 检查这些 key：
+
+
+- `message_*.db`
+- `media_*.db`
+- `message_resource.db`
+- `hardlink.db`
+- `emoticon.db`
+
+
+任务 4：不要改变 API
+
+
+本阶段不改 `MediaResult` 字段，不改 TypeScript shared types。
+
+
+输出要求：
+
+
+1. 修改计划；
+2. 修改代码；
+3. 测试结果：
+
+- `cargo test get_db_subdir` 或相关测试；
+- `cargo check`；
+4. 说明这个阶段能解决哪些“文件/媒体查不到”的情况；
+5. 说明还不能解决哪些情况，例如文件确实未被微信下载、图片解码失败等。
+
+
+验收：
+
+
+- 分片 DB 路径映射正确；
+- key 缺失时能懒提取；
+- 不破坏原有 listChats/listMessages/getMedia API。
+
+
+```
+
+---
+
+# P3：Execution / Plan 性能基础重构
+
+这一阶段解决“每一步都截图”的设计问题。```text
+继续处理仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+现在只做第三阶段：Execution loop 和 Plan observation requirements 重构。
+
+目标：
+
+- 让不同 Plan 可以声明自己是否需要 screenshot；
+- SendMessagePlan 和 ChatOpenPlan 不再每一步 capture screenshot；
+- 登录、二维码识别等需要 screenshot 的流程不能被破坏；
+- 不做 chat-select cache，不做 composite send tool，不改 monitor。
+
+重点文件：
+
+- `packages/agent-server-rust/src/plans/mod.rs`
+- `packages/agent-server-rust/src/execution/mod.rs`
+- `packages/agent-server-rust/src/plans/send_message.rs`
+- `packages/agent-server-rust/src/plans/chat_open.rs`
+- 登录相关 plan 文件
+- IA state reduce/identify 相关文件
+
+任务 1：扩展 Plan trait
+
+给 `Plan` trait 增加默认方法：
+
+```rustfn needs_screenshot(&self) -> bool {true}
+
+```
+
+
+或者更完整：
+
+
+```
+
+fn observation_requirements(&self) -> ObservationRequirements
+
+```
+
+
+但本阶段建议保持简单，先用 `needs_screenshot()`。
+
+
+任务 2：修改 `run_execution_loop`
+
+
+当前每个 step 都获取：
+
+
+- a11y tree；
+- screenshot；
+- screenshot bytes。
+
+
+请改成：
+
+
+- 总是获取 a11y；
+- 只有 `plan.needs_screenshot() == true` 时才 capture screenshot；
+- 否则传空 screenshot string 和空 bytes；
+- 保证 identify/reduce 逻辑不会 panic。
+
+
+任务 3：让高频 plan 不截图
+
+
+让以下 plan 返回 false：
+
+
+- `SendMessagePlan`
+- `ChatOpenPlan`
+
+
+登录/二维码相关 plan 保持 true。
+
+
+任务 4：日志验证
+
+
+在 execution loop 中加 debug/info 日志，能看出当前 plan 是否 skipping screenshot，例如：
+
+
+```
+
+[exec] plan=send_message needs_screenshot=false
+
+```
+
+
+任务 5：测试
+
+
+运行：
+
+
+- `cargo check`
+- 如果有相关 tests，运行 `cargo test`
+
+
+手动测试建议：
+
+
+- 登录流程仍然能显示 QR；
+- open chat 能正常执行；
+- send text 能正常执行；
+- send image/file 能正常执行。
+
+
+输出要求：
+
+
+1. 修改了 Plan trait 的哪些地方；
+2. 哪些 Plan 不再截图；
+3. 是否有任何 state reduce 依赖截图；
+4. 测试结果；
+5. 风险点。
+
+
+验收：
+
+
+- SendMessagePlan/ChatOpenPlan 不再每一步截图；
+- 登录相关流程不受影响；
+- 编译通过。
+
+
+```
+
+---
+
+# P4：发送 fast path 与 session-aware UI tool
+
+这一阶段解决“当前聊天发送仍走 Frida”和多 session 隐患。
+
+```text
+继续处理仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+现在只做第四阶段：发送 fast path + session-aware UI tool 调用。
+
+目标：
+
+1. 如果当前已经打开目标聊天，发送消息时跳过 `chat-select.py`；
+2. 所有 UI 工具调用都应该使用当前 session 的 DISPLAY/DBUS/HOME，不要偷偷用 `ExecOptions::default()`；
+3. 不做 chat-select daemon/cache；
+4. 不做 composite send tool；
+5. 不改 MediaResult；
+6. 不改 monitor 持久化。
+
+重点文件：
+
+- `packages/agent-server-rust/src/plans/send_message.rs`
+- `packages/agent-server-rust/src/plans/chat_open.rs`
+- `packages/agent-server-rust/src/tools/chat_select.rs`
+- `packages/agent-server-rust/src/execution/mod.rs`
+- `packages/agent-server-rust/src/execution/actions.rs`
+- `packages/agent-server-rust/src/tools/exec.rs`
+- `docker/tools/chat-select.py`
+
+任务 1：让 plan 能拿到当前 session 或 ExecOptions
+
+现在 `open_chat` 和部分 paste 操作可能使用 `ExecOptions::default()`。
+
+请调整接口，使这些 UI 操作使用当前 execution loop 的 session：
+
+- `open_chat(...)` 应接受 `&ExecOptions` 或 session 参数；
+- `paste-file` / `paste-image` 相关 action 也不能绕过 session；
+- 不要让 a11y 观察的是一个 DISPLAY，实际点击/粘贴跑到另一个 DISPLAY。
+
+任务 2：SendMessagePlan fast path
+
+在 `SendMessagePhase::Opening` 中加入可靠判断：
+
+- 如果当前 main state 是 `chat_open`；
+- 且能确认当前打开聊天就是 `params.chat_id`；
+- 则直接跳到 `Focusing`，不要调用 `open_chat()`。
+
+可以使用：
+
+- `state.main_window.selected_chat_id`，如果它可靠；
+- 或新增 execution/server 内部缓存，例如最近一次成功 openChat 的 chatId；
+- 或在 ChatOpenPlan/open_chat 成功后把目标 chat_id 写入 context state。
+
+要求：
+
+- 给当前聊天连续发送多条消息时，日志应显示 fast path；
+- 给不同聊天发送时，仍然能正常调用 openChat；
+- fast path 判断不可靠时宁可 fallback 到 openChat，不要误发到错误聊天。
+
+任务 3：ChatOpenPlan 同步更新当前 chat 状态
+
+如果 openChat 成功，请确保 AppState 或某个内部状态能记录当前 chatId，供 SendMessagePlan fast path 使用。
+
+任务 4：修复 chat-select.py PID 选择策略
+
+当前 Python 版如果只是取第一个 PID，请改成和 Rust `find_wechat_pid()` 一样：选择 open fd 数最多的 WeChat PID。
+
+或者让 Rust 找 PID 后通过参数传给 `chat-select.py`。
+
+任务 5：日志
+
+新增清晰日志：
+
+- `[send] fast-path current chat: `
+- `[send] opening target chat: `
+- `[chat-select] using pid= fd_count=`
+- `[tool] session display=:xx`
+
+输出要求：
+
+1. 修改计划；
+2. 修改代码；
+3. `cargo check`；
+4. 手动测试步骤；
+5. 说明如何从日志确认 fast path 生效。
+
+验收：
+
+- 当前聊天连续发送不触发 chat-select；
+- 不同聊天发送仍正常；
+- UI tool 调用不再默认跑到错误 session；
+- 编译通过。
+```
+
+---
+
+# P5：复合发送动作，减少 subprocess
+
+这一阶段进一步降延迟。```
+继续处理仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+现在只做第五阶段：复合发送动作，减少 subprocess 和 FSM step。
+
+目标：
+
+- 文本发送从多个外部命令减少到尽量一个外部命令；
+- 图片/文件发送也支持 paste + Return 合并；
+- 保持现有 API 兼容；
+- 不改 monitor；
+- 不改 media 下载；
+- 不改 chat-select。
+
+重点文件：
+
+- `packages/agent-server-rust/src/ia/types.rs`
+- `packages/agent-server-rust/src/execution/actions.rs`
+- `packages/agent-server-rust/src/plans/send_message.rs`
+- `docker/tools/input`
+- `docker/tools/paste-file`
+- `docker/tools/paste-image`
+- 可能新增：
+- `docker/tools/send-text`
+- `docker/tools/send-file`
+- `docker/tools/send-image`
+
+任务 1：新增复合工具脚本
+
+新增或增强工具脚本：
+
+### `send-text`
+
+完成：
+
+- focus 已经由 plan 确保；
+- ctrl+a；
+- 设置 clipboard；
+- ctrl+v；
+- Return；
+- 返回明确 stdout/stderr/exit code。
+
+要求：
+
+- 支持 Unicode；
+- 不使用 shell unsafe interpolation；
+- 长文本尽量稳定；
+- 失败返回非 0。
+
+### `send-file`
+
+完成：
+
+- 设置 file URI clipboard；
+- ctrl+v；
+- 等待短时间；
+- Return。
+
+保留非 ASCII path 的安全处理。
+
+### `send-image`
+
+完成：
+
+- 设置 image clipboard；
+- ctrl+v；
+- 等待短时间；
+- Return。
+
+任务 2：扩展 Action 或在 SendMessagePlan 中调用复合工具
+
+优先设计成 Action：
+
+```rustAction::SendText { text: String }Action::SendFile { path: String }Action::SendImage { path: String, mime: Option }
+
+```
+
+
+如果改 Action 影响 TS 类型较大，也可以先只在 `SendMessagePlan` 中返回一个现有 `Action::Sequence` 的替代形式，但不要绕过 session。
+
+
+任务 3：简化 SendMessagePlan::Inputting
+
+
+把：
+
+
+- ctrl+a；
+- Type；
+- Wait；
+- Return；
+
+
+替换为复合动作。
+
+
+文件/图片同理。
+
+
+任务 4：确认逻辑暂时保留
+
+
+本阶段不重构发送确认。仍可保留 `Confirming` 判断 Send(S) disabled，但请加 TODO：后续应改成 DB-based confirmation。
+
+
+任务 5：测试
+
+
+至少验证：
+
+
+- 发送中文文本；
+- 发送英文长文本；
+- 发送图片；
+- 发送 PDF 或 txt 文件；
+- 文件名包含中文时行为如何，记录限制。
+
+
+输出要求：
+
+
+1. 新增/修改了哪些工具脚本；
+2. Rust Action 如何变化；
+3. subprocess 数量相比之前减少到多少；
+4. 测试结果；
+5. 兼容性风险。
+
+
+验收：
+
+
+- 文本发送成功；
+- 图片发送成功；
+- 文件发送成功；
+- 当前聊天发送延迟明显下降；
+- 编译通过。
+
+
+```
+
+---
+
+# P6：MediaResult 结构化失败原因
+
+这一阶段让媒体失败可诊断。```text
+继续处理仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+现在只做第六阶段：MediaResult 结构化失败原因和 retryable 语义。
+
+目标：
+
+1. getMedia 不再只返回 `data: null` 这种模糊结果；
+2. 能区分 pending、unsupported、missing_key、path_not_found、decrypt_failed、convert_failed、not_downloaded、cdn_only 等原因；
+3. OpenClaw monitor 根据 retryable 决定是否继续重试；
+4. 尽量保持兼容：旧字段 type/data/url/format/filename 仍保留。
+
+重点文件：
+
+- `packages/agent-server-rust/src/ia/types.rs`
+- `packages/agent-server-rust/src/tools/wechat_media.rs`
+- `packages/agent-server-rust/src/router/messages.rs`
+- `packages/shared/src/types`
+- `packages/shared/src/client.ts`
+- `packages/openclaw-extension/src/monitor.ts`
+- 类型生成相关脚本
+
+任务 1：扩展 MediaResult
+
+在 Rust 类型里添加：
+
+```rustpub reason: Option,pub retryable: Option,
+
+```
+
+
+保持原有字段：
+
+
+- type
+- data
+- url
+- format
+- filename
+
+
+同步生成 TypeScript types。
+
+
+任务 2：统一 helper 构造函数
+
+
+在 `wechat_media.rs` 中不要到处手写 MediaResult。新增 helper：
+
+
+```
+
+fn media_ready(...)fn media_pending(reason: &str, retryable: bool, filename: ...)fn media_unsupported(reason: &str)fn media_failed(reason: &str, retryable: bool, ...)
+
+```
+
+
+建议 reason 字符串：
+
+
+- `unsupported`
+- `pending`
+- `not_downloaded`
+- `missing_key`
+- `path_not_found`
+- `db_lookup_failed`
+- `decrypt_failed`
+- `xor_key_failed`
+- `convert_failed`
+- `cdn_only`
+
+
+任务 3：改造图片、语音、视频、文件分支
+
+
+不要大改解析逻辑，但所有失败分支都要有明确 reason/retryable。
+
+
+例子：
+
+
+- 找不到 message row：`db_lookup_failed`, retryable false 或 true 视情况；
+- 文件未下载：`not_downloaded`, retryable true；
+- 缺 image key：`missing_key`, retryable false；
+- dat 找不到：`path_not_found`, retryable true；
+- 解密失败：`decrypt_failed`, retryable false；
+- 视频本地文件不存在：`not_downloaded`, retryable true；
+- unsupported 类型：`unsupported`, retryable false。
+
+
+任务 4：OpenClaw monitor 的 pollMedia
+
+
+修改 `pollMedia`：
+
+
+- 如果 result.data 存在，返回；
+- 如果 result.url 存在，尝试下载或返回 URL media；
+- 如果 `retryable === false`，不要继续重试；
+- 如果 `retryable === true`，才继续重试；
+- 日志输出 type/reason/retryable。
+
+
+任务 5：URL-only media
+
+
+如果 emoji/CDN/file XML 只返回 url，没有 data：
+
+
+- 要么 monitor 下载 URL 后保存；
+- 要么明确 reason=`cdn_only`，retryable=false，并记录不支持；
+- 不要静默忽略。
+
+
+输出要求：
+
+
+1. MediaResult 类型变化；
+2. 每种 media 类型失败原因覆盖情况；
+3. monitor retry 策略变化；
+4. 类型生成和 typecheck 结果；
+5. 风险点。
+
+
+需要运行：
+
+
+```
+
+pnpm generate-typespnpm --filter @agent-wechat/shared buildpnpm --filter @agent-wechat/wechat typecheckcargo check
+
+```
+
+
+验收：
+
+
+- getMedia 失败时有 reason；
+- 不可重试失败不会盲目重试 15 秒；
+- 旧客户端仍能读取 type/data/url/format/filename；
+- 编译和 typecheck 通过。
+
+
+```
+
+---
+
+# P7：Unread / lastSeen / 红点状态重构
+
+这一阶段解决重复响应和红点逻辑混乱。```text
+继续处理仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+现在只做第七阶段：OpenClaw monitor 的 unread/lastSeen/红点状态重构。
+
+目标：
+
+1. openChat 失败后不再继续处理该 chat；
+2. unreadChats 过滤结合 lastMsgLocalId 和 lastSeenId，避免同一消息重复响应；
+3. lastSeenId 持久化，插件/服务重启后不重复处理旧消息；
+4. openChat(clearUnreads=true) 后轮询确认 unreadCount 是否真的清零；
+5. 明确区分：
+- WeChat UI unread cleared；
+- agent processed message。
+
+重点文件：
+
+- `packages/openclaw-extension/src/monitor.ts`
+- `packages/shared/src/client.ts`
+- `packages/agent-server-rust/src/router/chats.rs`
+- `packages/agent-server-rust/src/plans/chat_open.rs`
+- `packages/agent-server-rust/src/tools/wechat_chats.rs`
+- 可能新增 monitor state storage 文件
+
+任务 1：openChat 失败直接 return
+
+在 `processUnreadChat` 中：
+
+- 如果 `client.openChat(chatId, true)` throw，直接 return；
+- 如果返回 `{ ok: false }`，直接 return；
+- 不允许 UI 没打开成功时继续 listMessages/process/lastSeen。
+
+任务 2：unreadChats 过滤结合 lastMsgLocalId
+
+将 unreadChats 筛选改成：
+
+```tsconst unreadChats = chats.filter((c) => {const chatId = c.username ?? c.id;const processedUntil = lastSeenId.get(chatId) ?? 0;return c.unreadCount > 0&& !isOfficialAccount(chatId)&& (!c.lastMsgLocalId || c.lastMsgLocalId > processedUntil);});
+
+```
+
+
+注意 firstPoll 和 catch-up 逻辑也要检查，避免漏消息。
+
+
+任务 3：lastSeenId 持久化
+
+
+实现一个 MonitorStateStore。
+
+
+优先使用 OpenClaw runtime 如果存在标准 storage API；如果没有，就实现文件存储。
+
+
+要求：
+
+
+- key 至少包含 accountId + chatId；
+- value 是 lastSeenLocalId；
+- monitor 启动时加载；
+- 每次成功处理后保存；
+- 写入要尽量原子化，避免文件损坏；
+- 日志说明 loaded/saved。
+
+
+建议结构：
+
+
+```
+
+{"accounts": {"default": {"wxid_xxx": {"lastSeenLocalId": 123,"updatedAt": "2026-..."}}}}
+
+```
+
+
+任务 4：openChat 后确认 unread 清零
+
+
+新增：
+
+
+```
+
+async function waitUnreadCleared(client, chatId, attempts = 6, intervalMs = 500)
+
+```
+
+
+打开聊天后调用。
+
+
+如果未清零：
+
+
+- 记录日志；
+- 不要因此重复处理已处理消息；
+- 可以继续处理新消息，但要分开记录 “unread not cleared”。
+
+
+任务 5：ChatOpenResult 可选扩展
+
+
+如果需要，可以让 `/api/chats/{id}/open` 返回：
+
+
+- `unreadCleared`
+- `unreadCountAfter`
+
+
+但注意兼容旧字段。
+
+
+任务 6：测试
+
+
+模拟/手动测试：
+
+
+1. 收到未读消息后处理；
+2. 同一 unread 红点未清时，不重复响应同一 localId；
+3. 重启 OpenClaw/plugin 后，不重复处理旧消息；
+4. 新消息 localId 增大时仍能处理；
+5. openChat 失败时不处理消息。
+
+
+输出要求：
+
+
+1. 状态存储实现方式；
+2. unread filtering 改动；
+3. openChat failure handling 改动；
+4. 测试步骤；
+5. 风险点。
+
+
+验收：
+
+
+- 重启后 lastSeen 不丢；
+- 红点没清时不重复响应旧消息；
+- 新消息仍能正常响应；
+- openChat 失败不会继续处理。
+
+
+```
+
+---
+
+# P8：Chat selection 服务化/缓存化
+
+这一阶段是中高级性能优化，不建议太早做。```text
+继续处理仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+现在只做第八阶段：chat-select 性能优化和服务化准备。
+
+目标：
+
+1. 降低每次 openChat 的 Frida attach/enumerate/hook 成本；
+2. 不引入不稳定的大 daemon 前，先做安全缓存；
+3. 为未来 chat-select daemon/service 化铺路；
+4. 保持行为可靠，失败时自动 fallback 到完整枚举。
+
+重点文件：
+
+- `docker/tools/chat-select.py`
+- `packages/agent-server-rust/src/tools/chat_select.rs`
+- `packages/agent-server-rust/src/plans/chat_open.rs`
+- `packages/agent-server-rust/src/plans/send_message.rs`
+
+任务 1：降低 detach 固定等待
+
+如果 `chat-select.py` 中存在固定 `time.sleep(1)` 用于 Frida detach，改成环境变量控制：
+
+```pythonCHAT_SELECT_DETACH_SLEEP=0.1
+
+```
+
+
+默认 0.1 秒。若出问题，用户可设回 1 秒。
+
+
+任务 2：短 TTL session cache
+
+
+实现保守缓存：
+
+
+- 缓存 username -> filtered index；
+- 缓存 pid；
+- 缓存 build_id；
+- 缓存创建时间；
+- TTL 默认 1-3 秒；
+- 如果 pid/build_id 变化，缓存失效；
+- 如果 select hook 失败，清 cache 并完整重试一次；
+- 不长期缓存 vector_base，除非你确认安全。
+
+
+任务 3：当前 selection cache
+
+
+如果能可靠读取 current selection，则缓存最近打开 chatId。用于 openChat skip 或 send fast path。注意不能误发。
+
+
+任务 4：日志
+
+
+日志要能看出：
+
+
+- cache hit；
+- cache miss；
+- cache invalidated；
+- fallback full enumerate；
+- select success/fail。
+
+
+任务 5：不要一开始就做 daemon
+
+
+本阶段不要把 Frida 改成常驻 daemon，除非你认为代价很小。先把接口设计成未来可替换：
+
+
+```
+
+ChatSelectionBackend:
+- list_sessions
+- current_selection
+- select_chat
+
+```
+
+
+任务 6：测试
+
+
+- 连续打开同一个聊天；
+- 连续给同一个聊天发送；
+- 快速切换两个聊天；
+- WeChat 重启后缓存失效；
+- unknown BuildID 时错误仍清楚。
+
+
+输出要求：
+
+
+1. cache 设计；
+2. 失效条件；
+3. fallback 逻辑；
+4. 延迟改善预期；
+5. 风险点。
+
+
+验收：
+
+
+- cache hit 时 openChat 明显减少 Frida enumerate 成本；
+- cache 失败不会误选聊天；
+- WeChat 重启/BuildID 变化后不会使用旧 cache。
+
+
+```
+
+---
+
+# P9：发送确认从 UI disabled 升级为 DB confirmation
+
+这一阶段提升发送可靠性。```text
+继续处理仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+现在只做第九阶段：发送确认逻辑从 UI 状态升级为 DB-based confirmation。
+
+目标：
+
+当前 SendMessagePlan 的确认逻辑主要看 Send(S) button 是否 disabled。这只能说明输入框可能清空了，不能确认消息真的进入微信数据库。
+
+请增强发送确认：
+
+1. 发送前读取目标 chat 的 lastMsgLocalId 或最新 self message local_id；
+2. 执行发送；
+3. 发送后轮询数据库；
+4. 确认出现新的 self message；
+5. 保留 UI disabled 作为辅助信号；
+6. 返回更明确的 SendResult。
+
+重点文件：
+
+- `packages/agent-server-rust/src/plans/send_message.rs`
+- `packages/agent-server-rust/src/router/messages.rs`
+- `packages/agent-server-rust/src/tools/wechat_messages.rs`
+- `packages/agent-server-rust/src/tools/wechat_chats.rs`
+- `packages/agent-server-rust/src/ia/types.rs`
+- shared TS types if SendResult 扩展
+
+任务 1：发送前 baseline
+
+在发送前获取：
+
+- chat last_msg_local_id；
+- 或 message table 最新 local_id；
+- 或最新 self message。
+
+注意要复用已有 keys/account_dir 逻辑，不要重复大量代码。
+
+任务 2：发送后轮询
+
+发送后轮询若干次，例如：
+
+- 10 次；
+- 每次 300ms；
+- 查询目标 chat 的最新消息；
+- 确认 local_id 大于 baseline；
+- 确认 is_self；
+- 文本发送可以可选确认 content 包含发送文本；
+- 文件/图片发送可以只确认 self new message type。
+
+任务 3：SendResult 扩展
+
+如果可行，扩展：
+
+```rustpub struct SendResult {success: bool,error: Option,confirmed: Option,local_id: Option,confirmation_method: Option,}
+
+```
+
+
+注意兼容旧字段。
+
+
+任务 4：失败处理
+
+
+区分：
+
+
+- UI action failed；
+- message not confirmed；
+- DB unavailable；
+- timeout；
+- popup/error。
+
+
+任务 5：测试
+
+
+- 发送文本；
+- 发送图片；
+- 发送文件；
+- 网络慢时是否 pending/timeout；
+- DB key 缺失时是否有明确错误。
+
+
+输出要求：
+
+
+1. 发送确认链路；
+2. SendResult 是否扩展；
+3. 测试结果；
+4. 风险点。
+
+
+验收：
+
+
+- 发送成功不只依赖 Send button disabled；
+- 发送失败/未确认时有明确错误；
+- 不破坏现有 send API。
+
+
+```
+
+---
+
+# P10：最终集成验收提示词
+
+所有阶段跑完后，发这个让 Codex 做全局检查。```text
+请对当前仓库做最终集成验收，不要继续添加新功能，除非是修复前面改动造成的问题。
+
+仓库：
+
+https://github.com/AlexbeatsZ/agent-wechat
+
+请按照最初总目标逐项检查：
+
+## 1. 发送性能
+
+验收：
+
+- 当前已打开聊天发送文本，不触发 chat-select.py；
+- SendMessagePlan / ChatOpenPlan 不 capture screenshot；
+- 文本发送减少 subprocess；
+- 图片/文件发送正常；
+- 发送确认比单纯 Send(S) disabled 更可靠，或至少有 TODO 和日志说明；
+- 所有 UI tool 使用当前 session 环境，不偷偷用默认 DISPLAY。
+
+请输出相关代码位置和日志判断方法。
+
+## 2. 媒体/文件读取
+
+验收：
+
+- message_1.db、media_1.db 等分片路径正确；
+- key 缺失时 lazy extraction 正常；
+- MediaResult 有 reason/retryable；
+- pollMedia 根据 retryable 决定重试；
+- URL-only media 有明确处理；
+- 普通文件附件无法下载时，有明确 reason，而不是静默 null。
+
+请输出每种媒体类型的处理路径：
+
+- image
+- voice
+- video
+- file attachment
+- emoji
+
+## 3. unread / 红点 / monitor
+
+验收：
+
+- openChat 失败后不处理该 chat；
+- unreadChats 结合 unreadCount + lastMsgLocalId + lastSeenId；
+- lastSeenId 持久化；
+- 重启后不重复处理旧消息；
+- unread 未清时不会重复响应同一 localId；
+- 新消息仍能触发；
+- WeChat UI 已读和 agent 已处理是分离状态。
+
+## 4. 半废弃/误导性代码
+
+检查并说明是否已处理：
+
+- a11y parent refs 文档/实现不一致；
+- unused `_send_btn` 参数；
+- get_emoji_media 未接通；
+- MediaResult.url 上层不处理；
+- effects 当前是否空壳；
+- chat-select.py PID 选择；
+- ExecOptions::default() 多 session 隐患；
+- clearUnreads 命名/语义不一致。
+
+## 5. 测试
+
+请运行或说明无法运行的原因：
+
+```bashcargo checkcargo testpnpm generate-typespnpm --filter @agent-wechat/shared buildpnpm --filter @agent-wechat/wechat typecheckpnpm build
+
+```
+
+
+## 6. 手动测试清单
+
+
+请给出完整手动测试步骤：
+
+
+1. 登录；
+2. 当前聊天连续发送文本；
+3. 切换聊天发送文本；
+4. 发送中文长文本；
+5. 发送图片；
+6. 发送普通文件；
+7. 接收图片并下载；
+8. 接收语音并下载；
+9. 接收视频；
+10. 接收普通文件附件；
+11. 未读消息触发 monitor；
+12. 红点未清但不重复响应；
+13. 重启 OpenClaw/plugin 后不重复处理旧消息；
+14. WeChat 重启后 chat-select cache 不误用。
+
+
+输出格式：
+
+
+- 总体是否通过；
+- 未通过项；
+- 风险项；
+- 推荐后续修复；
+- 关键日志观察方法；
+- 修改文件列表。
+
+
+```
+
+---
