@@ -69,7 +69,11 @@ async fn handle_vnc_ws(ws: WebSocket, websockify_port: u16) {
 /// Landing page: if ?token= is present, load noVNC with auto-connect.
 /// Otherwise show a password prompt.
 pub async fn vnc_static(uri: Uri) -> Response {
-    let path = uri.path().strip_prefix("/vnc/").unwrap_or("");
+    let path = uri
+        .path()
+        .strip_prefix("/vnc/")
+        .or_else(|| uri.path().strip_prefix("/vnc"))
+        .unwrap_or("");
     let path = if path.is_empty() { "" } else { path };
 
     // Serve the landing page at /vnc/ (no file path)
@@ -221,9 +225,8 @@ const LOGIN_PAGE: &str = r#"<!DOCTYPE html>
   </form>
 </div>
 <script>
-document.getElementById('form').addEventListener('submit', function(e) {
-  e.preventDefault();
-  var token = document.getElementById('token').value.trim();
+function connectWithToken(token) {
+  token = (token || '').trim();
   if (!token) return;
   // Verify token by hitting the websockify endpoint
   var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -236,7 +239,18 @@ document.getElementById('form').addEventListener('submit', function(e) {
   ws.onerror = function() {
     document.getElementById('error').style.display = 'block';
   };
+}
+
+document.getElementById('form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  connectWithToken(document.getElementById('token').value);
 });
+
+var queryToken = new URLSearchParams(window.location.search).get('token');
+if (queryToken) {
+  document.getElementById('token').value = queryToken;
+  connectWithToken(queryToken);
+}
 </script>
 </body>
 </html>"#;

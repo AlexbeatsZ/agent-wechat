@@ -64,6 +64,7 @@ pub fn build_router() -> Router {
         .route("/api/ws/events", get(events::events_ws))
         // VNC: WebSocket proxy + static files (behind auth)
         .route("/vnc/websockify", get(vnc::vnc_ws))
+        .route("/vnc", get(vnc::vnc_static))
         .route("/vnc/{*path}", get(vnc::vnc_static))
         .route("/vnc/", get(vnc::vnc_static))
         // Middleware: auth → body limit → CORS (applied bottom-up)
