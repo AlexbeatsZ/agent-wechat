@@ -12,6 +12,8 @@ const state = {
     sending: false,
     filesOpen: false,
     serverFiles: [],
+    loginQrDataUrl: "",
+    loginMessage: "",
 };
 function labelForKind(kind) {
     return {
@@ -58,6 +60,25 @@ async function refreshStatus() {
     }
     catch (error) {
         state.status = { agentReachable: false, loggedIn: false, status: "unknown", error: String(error) };
+    }
+    render();
+}
+async function startWechatLogin() {
+    state.error = "";
+    state.loginMessage = "正在获取微信登录二维码";
+    state.loginQrDataUrl = "";
+    render();
+    try {
+        const result = await api("/api/wechat-login", { method: "POST", body: "{}" });
+        state.loginQrDataUrl = result.qrDataUrl || "";
+        state.loginMessage = result.qrDataUrl
+            ? "请使用手机微信扫码登录"
+            : result.message || result.state?.status || "登录流程已启动";
+        await refreshStatus();
+    }
+    catch (error) {
+        state.loginMessage = "";
+        state.error = error instanceof Error ? error.message : String(error);
     }
     render();
 }
@@ -213,6 +234,11 @@ function render() {
           <div><strong>${state.status?.loggedIn ? "已登录" : "未登录"}</strong><span>${escapeHtml(state.status?.loggedInUser || state.status?.status || "unknown")}</span></div>
           <button id="login-btn">${state.status?.loggedIn ? "刷新" : "登录微信"}</button>
         </div>
+        ${!state.status?.loggedIn && (state.loginQrDataUrl || state.loginMessage) ? `
+          <div class="login-qr-panel">
+            ${state.loginQrDataUrl ? `<img src="${state.loginQrDataUrl}" alt="微信登录二维码">` : ""}
+            <span>${escapeHtml(state.loginMessage)}</span>
+          </div>` : ""}
         <div class="toolbar"><button id="server-files">服务器文件</button><button id="refresh">刷新</button></div>
         ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ""}
         <div class="chat-list">${state.chats.map((item) => `
@@ -241,7 +267,14 @@ function render() {
 }
 function bindEvents() {
     document.querySelector("#refresh")?.addEventListener("click", () => void refreshAll());
-    document.querySelector("#login-btn")?.addEventListener("click", () => void api("/api/wechat-login", { method: "POST", body: "{}" }).then(refreshAll).catch((e) => { state.error = String(e); render(); }));
+    document.querySelector("#login-btn")?.addEventListener("click", () => {
+        if (state.status?.loggedIn) {
+            void refreshAll();
+        }
+        else {
+            void startWechatLogin();
+        }
+    });
     document.querySelector("#server-files")?.addEventListener("click", () => void loadServerFiles().catch((e) => { state.error = String(e); render(); }));
     document.querySelector("#close-files")?.addEventListener("click", () => { state.filesOpen = false; render(); });
     document.querySelectorAll("[data-chat]").forEach((button) => button.addEventListener("click", () => {

@@ -9,6 +9,8 @@ button, textarea { font: inherit; }
 button { border: 1px solid #c7ccd4; background: #fff; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 .error-banner { margin: 8px 10px; padding: 8px; background: #fff1f0; border: 1px solid #ffccc7; color: #9f1d16; border-radius: 6px; }
+.login-qr-panel { margin: 8px 10px; padding: 10px; border: 1px solid #d9dde3; border-radius: 8px; display: grid; justify-items: center; gap: 8px; background: #fafbfc; color: #68707d; font-size: 13px; text-align: center; }
+.login-qr-panel img { width: 180px; height: 180px; image-rendering: crisp-edges; background: #fff; border-radius: 4px; }
 .chat-list { overflow: auto; }
 .chat-item { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; text-align: left; border: 0; border-radius: 0; border-bottom: 1px solid #eef0f3; padding: 10px; }
 .chat-item.active { background: #eaf2ff; }
@@ -45,6 +47,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .chat-item span, .chat-item small, .status-line span, .conversation header span, .message-meta, time, .system-message, .server-file span, .server-file small { color: #a7b0bd; }
   .out .bubble { background: #21452a; border-color: #2c5b36; }
   .error-banner { background: #3a1715; border-color: #7a2e29; color: #ffb4ad; }
+  .login-qr-panel { background: #151a21; border-color: #343b45; color: #a7b0bd; }
   .readonly-note { background: #332600; border-color: #665000; color: #ffd98a; }
 }
 @media (max-width: 760px) {
