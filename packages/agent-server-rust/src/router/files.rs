@@ -110,3 +110,16 @@ fn percent_encode(input: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::percent_encode;
+
+    #[test]
+    fn percent_encodes_chinese_filenames_for_content_disposition() {
+        assert_eq!(
+            percent_encode("测试 文件.pdf"),
+            "%E6%B5%8B%E8%AF%95%20%E6%96%87%E4%BB%B6.pdf"
+        );
+    }
+}

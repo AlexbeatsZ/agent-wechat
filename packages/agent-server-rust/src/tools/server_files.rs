@@ -185,3 +185,46 @@ pub fn resolve_server_file(account_dir: &str, id: &str) -> Option<ResolvedServer
         filename,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_id, detect_content_type, encode_id};
+    use std::fs;
+
+    #[test]
+    fn detects_common_file_types_from_headers() {
+        let dir = tempfile::tempdir().unwrap();
+        let cases = [
+            ("doc", b"%PDF-1.7".as_slice(), "application/pdf"),
+            ("png", &[0x89, b'P', b'N', b'G'], "image/png"),
+            ("jpg", &[0xff, 0xd8, 0xff, 0x00], "image/jpeg"),
+            ("zip", b"PK\x03\x04abcd".as_slice(), "application/zip"),
+        ];
+
+        for (name, bytes, expected) in cases {
+            let path = dir.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert_eq!(detect_content_type(&path), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn safe_ids_round_trip_without_paths() {
+        let relative = std::path::Path::new("msg/file/2026-06/中文文件.pdf");
+        let id = encode_id(0, relative);
+        let (base, decoded) = decode_id(&id).unwrap();
+
+        assert_eq!(base, 0);
+        assert_eq!(decoded, relative);
+    }
+
+    #[test]
+    fn rejects_traversal_ids() {
+        let raw = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            b"0:msg/file/../../secret.txt",
+        );
+
+        assert!(decode_id(&raw).is_none());
+    }
+}

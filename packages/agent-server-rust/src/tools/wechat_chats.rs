@@ -29,6 +29,29 @@ pub fn classify_chat(username: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::classify_chat;
+
+    #[test]
+    fn classifies_supported_chat_kinds() {
+        let cases = [
+            ("filehelper", "filehelper"),
+            ("wxid_friend", "individual"),
+            ("12345@chatroom", "group"),
+            ("gh_abcdef123456", "official"),
+            ("ww_service_notice", "service"),
+            ("notice@qy_u", "service"),
+            ("weixin", "system"),
+            ("user@openim", "openim"),
+        ];
+
+        for (username, expected) in cases {
+            assert_eq!(classify_chat(username), expected, "{username}");
+        }
+    }
+}
+
 /// List chats by querying WeChat's session.db and contact.db.
 pub fn list_chats(
     account_dir: &str,
