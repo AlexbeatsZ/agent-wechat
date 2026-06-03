@@ -12,6 +12,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .login-qr-panel { margin: 8px 10px; padding: 10px; border: 1px solid #d9dde3; border-radius: 8px; display: grid; justify-items: center; gap: 8px; background: #fafbfc; color: #68707d; font-size: 13px; text-align: center; }
 .login-qr-panel img { width: 180px; height: 180px; image-rendering: crisp-edges; background: #fff; border-radius: 4px; }
 .chat-list { overflow: auto; }
+.empty-state { padding: 18px 12px; color: #68707d; text-align: center; font-size: 13px; }
 .chat-item { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; text-align: left; border: 0; border-radius: 0; border-bottom: 1px solid #eef0f3; padding: 10px; }
 .chat-item.active { background: #eaf2ff; }
 .chat-item strong, .chat-item span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -31,6 +32,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .file-link { width: 100%; text-align: left; border-style: dashed; }
 .composer { border-top: 1px solid #d9dde3; border-bottom: 0; background: #fff; }
 .composer textarea { flex: 1; min-height: 42px; max-height: 120px; resize: vertical; border: 1px solid #c7ccd4; border-radius: 6px; padding: 9px; }
+.attach-wrap { position: relative; }
+.attach-menu { position: absolute; left: 0; bottom: calc(100% + 8px); width: 116px; padding: 6px; background: #fff; border: 1px solid #c7ccd4; border-radius: 8px; box-shadow: 0 8px 22px rgba(20, 28, 38, .16); display: grid; gap: 4px; z-index: 3; }
+.attach-menu button { width: 100%; text-align: left; border: 0; }
 .readonly-note { color: #8a5b00; background: #fff7e6; border: 1px solid #ffe0a3; border-radius: 6px; padding: 8px; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; padding: 24px; }
 .modal-panel { width: min(900px, 100%); max-height: 82vh; overflow: hidden; background: #fff; border-radius: 8px; display: grid; grid-template-rows: auto 1fr; }
@@ -41,10 +45,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .server-file span, .server-file small { display: block; color: #68707d; font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
 @media (prefers-color-scheme: dark) {
   body { background: #111418; color: #eef1f4; }
-  .sidebar, .conversation header, .composer, button, .bubble, .modal-panel { background: #1b2027; color: #eef1f4; }
-  .sidebar, .status-line, .toolbar, .conversation header, .composer, .bubble, button, .chat-item { border-color: #343b45; }
+  .sidebar, .conversation header, .composer, button, .bubble, .modal-panel, .attach-menu { background: #1b2027; color: #eef1f4; }
+  .sidebar, .status-line, .toolbar, .conversation header, .composer, .bubble, button, .chat-item, .attach-menu { border-color: #343b45; }
   .chat-item.active { background: #22334a; }
-  .chat-item span, .chat-item small, .status-line span, .conversation header span, .message-meta, time, .system-message, .server-file span, .server-file small { color: #a7b0bd; }
+  .chat-item span, .chat-item small, .status-line span, .conversation header span, .message-meta, time, .system-message, .server-file span, .server-file small, .empty-state { color: #a7b0bd; }
   .out .bubble { background: #21452a; border-color: #2c5b36; }
   .error-banner { background: #3a1715; border-color: #7a2e29; color: #ffb4ad; }
   .login-qr-panel { background: #151a21; border-color: #343b45; color: #a7b0bd; }

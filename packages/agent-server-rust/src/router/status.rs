@@ -11,12 +11,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::context::create_context;
 use crate::db::get_db;
+use crate::execution::actions::execute_action;
 use crate::execution::run_execution_loop;
+use crate::ia::actions as ia_actions;
 use crate::ia::types::*;
 use crate::ia::{find_state_by_id, identify_states};
 use crate::plans::login::{LoginParams, LoginPlan};
 use crate::plans::logout::{LogoutParams, LogoutPlan};
-use crate::sessions::manager::get_session;
+use crate::sessions::manager::{ensure_logged_in_account, get_session};
 use crate::tools::a11y::get_a11y_desktop;
 use crate::tools::exec::ExecOptions;
 use crate::tools::qr::{decode_qr_from_base64, to_data_url};
@@ -110,9 +112,15 @@ pub async fn auth_status() -> Json<serde_json::Value> {
         status
     );
 
+    let logged_in_user = if context.state.main_window.is_logged_in {
+        ensure_logged_in_account(&session).await
+    } else {
+        session.logged_in_user.clone()
+    };
+
     Json(serde_json::json!({
         "status": status,
-        "loggedInUser": session.logged_in_user,
+        "loggedInUser": logged_in_user,
     }))
 }
 
@@ -192,30 +200,161 @@ pub async fn logout() -> Json<serde_json::Value> {
     }))
 }
 
-pub async fn login() -> Json<serde_json::Value> {
-    let screenshot = capture_screenshot(&ExecOptions::default()).await;
+#[derive(Deserialize, Default)]
+pub struct LoginHttpParams {
+    #[serde(default, rename = "newAccount")]
+    new_account: bool,
+}
 
-    match screenshot {
-        Ok(b64) => {
-            if let Some(qr_result) = decode_qr_from_base64(&b64) {
-                let data_url = to_data_url(&qr_result.data).ok();
-                return Json(serde_json::json!({
+async fn observe_login_state(
+    session: &Session,
+) -> Option<(AppState, IdentifiedStates, A11yNode, String, ExecOptions)> {
+    let exec_options = ExecOptions {
+        session: Some(session.clone()),
+        timeout_ms: 30_000,
+    };
+    let a11y = get_a11y_desktop(&exec_options).await.ok()?;
+    let screenshot = capture_screenshot(&exec_options).await.unwrap_or_default();
+    let identified = identify_states(&a11y, &screenshot);
+
+    let mut context = {
+        let db = get_db();
+        create_context(session.clone(), &db)
+    };
+
+    if let Some(ref mw) = identified.main_window {
+        if let Some(state_impl) = find_state_by_id(&mw.state_id) {
+            let screenshot_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&screenshot)
+                .unwrap_or_default();
+            context.state = state_impl.reduce(&ReduceArgs {
+                prev: &context.state,
+                a11y: &a11y,
+                screenshot: &screenshot_bytes,
+            });
+        }
+    }
+
+    Some((context.state, identified, a11y, screenshot, exec_options))
+}
+
+fn login_payload_from_state(state: &AppState, screenshot: &str) -> serde_json::Value {
+    match state.main_window.view {
+        MainWindowView::LoginQr => {
+            let data_url = state
+                .main_window
+                .qr_data
+                .as_ref()
+                .and_then(|data| to_data_url(data).ok())
+                .or_else(|| {
+                    decode_qr_from_base64(screenshot).and_then(|qr| to_data_url(&qr.data).ok())
+                });
+            if data_url.is_some() {
+                serde_json::json!({
                     "success": false,
                     "state": { "status": "qr_pending" },
-                    "qrDataUrl": data_url
-                }));
+                    "qrDataUrl": data_url,
+                    "message": "请使用手机微信扫码登录"
+                })
+            } else {
+                serde_json::json!({
+                    "success": false,
+                    "state": { "status": "qr_decode_failed" },
+                    "code": "QR_DECODE_FAILED",
+                    "message": "微信已进入扫码登录页，但二维码识别失败，请通过 VNC 查看或重新切换账号"
+                })
             }
+        }
+        MainWindowView::LoginAccount => serde_json::json!({
+            "success": false,
+            "state": { "status": "account_pending" },
+            "message": "请点击登录当前账号，或切换账号显示二维码"
+        }),
+        MainWindowView::LoginPhoneConfirm => serde_json::json!({
+            "success": false,
+            "state": { "status": "phone_confirm" },
+            "message": "请在手机微信上确认登录"
+        }),
+        MainWindowView::LoginLoading => serde_json::json!({
+            "success": false,
+            "state": { "status": "loading" },
+            "message": "微信正在登录"
+        }),
+        MainWindowView::Chat | MainWindowView::ChatOpen => serde_json::json!({
+            "success": true,
+            "state": { "status": "logged_in" },
+            "message": "微信已登录"
+        }),
+        MainWindowView::NetworkProxySettings => serde_json::json!({
+            "success": false,
+            "state": { "status": "network_proxy_settings" },
+            "message": "微信停留在网络代理设置页"
+        }),
+    }
+}
 
-            Json(serde_json::json!({
+pub async fn login(Query(params): Query<LoginHttpParams>) -> Json<serde_json::Value> {
+    let session = match get_session("default") {
+        Some(s) => s,
+        None => {
+            return Json(serde_json::json!({
                 "success": false,
-                "state": { "status": "qr_pending" }
+                "state": { "status": "agent_unavailable" },
+                "message": "No session available"
             }))
         }
-        Err(_) => Json(serde_json::json!({
+    };
+
+    let Some((state, identified, a11y, screenshot, exec_options)) =
+        observe_login_state(&session).await
+    else {
+        return Json(serde_json::json!({
             "success": false,
-            "state": { "status": "logged_out" }
-        })),
+            "state": { "status": "unknown" },
+            "message": "无法读取微信窗口"
+        }));
+    };
+
+    if matches!(
+        state.main_window.view,
+        MainWindowView::Chat | MainWindowView::ChatOpen
+    ) {
+        let user = ensure_logged_in_account(&session).await;
+        return Json(serde_json::json!({
+            "success": true,
+            "state": { "status": "logged_in" },
+            "loggedInUser": user,
+            "message": "微信已登录"
+        }));
     }
+
+    let action = match state.main_window.view {
+        MainWindowView::LoginAccount => Some(if params.new_account {
+            ia_actions::click_switch_account()
+        } else {
+            ia_actions::click_login()
+        }),
+        MainWindowView::LoginPhoneConfirm if params.new_account => {
+            Some(ia_actions::click_selector(r#"push-button[name="Cancel"]"#))
+        }
+        MainWindowView::NetworkProxySettings => Some(ia_actions::click_back()),
+        _ => None,
+    };
+
+    if let Some(action) = action {
+        let frame = identified.main_window.as_ref().and_then(|m| m.frame.as_ref());
+        let emit = |_event: SubscriptionEvent| {};
+        execute_action(&action, frame, &exec_options, &a11y, &emit).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+        if let Some((state, _identified, _a11y, screenshot, _exec_options)) =
+            observe_login_state(&session).await
+        {
+            return Json(login_payload_from_state(&state, &screenshot));
+        }
+    }
+
+    Json(login_payload_from_state(&state, &screenshot))
 }
 
 #[derive(Deserialize)]

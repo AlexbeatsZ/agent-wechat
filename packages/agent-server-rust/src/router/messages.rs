@@ -11,7 +11,9 @@ use crate::db::get_db;
 use crate::execution::run_execution_loop;
 use crate::ia::types::{MediaResult, Message, SendResult, SubscriptionEvent};
 use crate::plans::send_message::{SendMessageParams, SendMessagePlan};
-use crate::sessions::manager::get_session;
+use crate::sessions::manager::{ensure_logged_in_account, get_session};
+use crate::tools::chat_select;
+use crate::tools::exec::ExecOptions;
 use crate::tools::wechat_chats;
 use crate::tools::wechat_db::{find_wechat_pid, list_account_dbs};
 use crate::tools::wechat_keys::{extract_keys_async, get_image_keys, get_stored_keys, store_keys};
@@ -24,6 +26,12 @@ pub struct ListParams {
     limit: i64,
     #[serde(default)]
     offset: i64,
+}
+
+#[derive(Deserialize)]
+pub struct MediaParams {
+    #[serde(rename = "ensureDownload", default)]
+    ensure_download: bool,
 }
 
 fn default_limit() -> i64 {
@@ -86,8 +94,8 @@ pub async fn list_messages(
         Some(s) => s,
         None => return Json(Vec::new()),
     };
-    let logged_in_user = match &session.logged_in_user {
-        Some(u) => u.clone(),
+    let logged_in_user = match ensure_logged_in_account(&session).await {
+        Some(u) => u,
         None => return Json(Vec::new()),
     };
 
@@ -134,7 +142,10 @@ pub async fn list_messages(
     ))
 }
 
-pub async fn get_media(Path((chat_id, local_id)): Path<(String, i64)>) -> Json<MediaResult> {
+pub async fn get_media(
+    Path((chat_id, local_id)): Path<(String, i64)>,
+    Query(params): Query<MediaParams>,
+) -> Json<MediaResult> {
     let session = match get_session("default") {
         Some(s) => s,
         None => {
@@ -149,8 +160,8 @@ pub async fn get_media(Path((chat_id, local_id)): Path<(String, i64)>) -> Json<M
             })
         }
     };
-    let logged_in_user = match &session.logged_in_user {
-        Some(u) => u.clone(),
+    let logged_in_user = match ensure_logged_in_account(&session).await {
+        Some(u) => u,
         None => {
             return Json(MediaResult {
                 media_type: "unsupported".to_string(),
@@ -175,13 +186,43 @@ pub async fn get_media(Path((chat_id, local_id)): Path<(String, i64)>) -> Json<M
         get_image_keys(&db, &session.id, &logged_in_user)
     };
 
-    Json(get_message_media(
+    let mut media = get_message_media(
         &logged_in_user,
         &keys,
         &chat_id,
         local_id,
         image_keys,
-    ))
+    );
+
+    if params.ensure_download && media.retryable == Some(true) {
+        let exec_options = ExecOptions {
+            session: Some(session.clone()),
+            timeout_ms: 30_000,
+        };
+        let _ = chat_select::open_chat(&chat_id, false, None, &exec_options).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+
+        let refreshed_keys = {
+            let db = get_db();
+            get_stored_keys(&db, &session.id, &logged_in_user)
+        };
+        let refreshed_keys =
+            ensure_keys_for_media(&logged_in_user, &session.id, &logged_in_user, refreshed_keys)
+                .await;
+        let refreshed_image_keys = {
+            let db = get_db();
+            get_image_keys(&db, &session.id, &logged_in_user)
+        };
+        media = get_message_media(
+            &logged_in_user,
+            &refreshed_keys,
+            &chat_id,
+            local_id,
+            refreshed_image_keys,
+        );
+    }
+
+    Json(media)
 }
 
 #[derive(Deserialize)]
@@ -230,7 +271,7 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         None => return Json(send_error("AGENT_UNAVAILABLE", "No session available")),
     };
 
-    let Some(logged_in_user) = session.logged_in_user.clone() else {
+    let Some(logged_in_user) = ensure_logged_in_account(&session).await else {
         return Json(send_error("WECHAT_WINDOW_NOT_FOUND", "NOT_LOGGED_IN"));
     };
 

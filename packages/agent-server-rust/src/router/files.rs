@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::ia::types::ServerFile;
-use crate::sessions::manager::get_session;
+use crate::sessions::manager::{ensure_logged_in_account, get_session};
 use crate::tools::server_files::{list_server_files, resolve_server_file};
 
 #[derive(Deserialize)]
@@ -35,8 +35,8 @@ pub async fn list_files(Query(params): Query<FileListParams>) -> Json<Vec<Server
         Some(s) => s,
         None => return Json(Vec::new()),
     };
-    let logged_in_user = match &session.logged_in_user {
-        Some(u) => u.clone(),
+    let logged_in_user = match ensure_logged_in_account(&session).await {
+        Some(u) => u,
         None => return Json(Vec::new()),
     };
     Json(list_server_files(
@@ -52,8 +52,8 @@ pub async fn download_file(Path(id): Path<String>) -> Response {
         Some(s) => s,
         None => return error_response(StatusCode::UNAUTHORIZED, "NOT_LOGGED_IN", "未登录微信"),
     };
-    let logged_in_user = match &session.logged_in_user {
-        Some(u) => u.clone(),
+    let logged_in_user = match ensure_logged_in_account(&session).await {
+        Some(u) => u,
         None => return error_response(StatusCode::UNAUTHORIZED, "NOT_LOGGED_IN", "未登录微信"),
     };
     let file = match resolve_server_file(&logged_in_user, &id) {

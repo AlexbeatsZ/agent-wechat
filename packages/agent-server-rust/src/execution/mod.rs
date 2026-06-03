@@ -274,7 +274,7 @@ where
             let error = plan
                 .stuck_error(&plan_state)
                 .map(|(code, message)| format!("{code}: {message}"))
-                .unwrap_or_else(|| "No action selected".to_string());
+                .unwrap_or_else(|| "PLAN_STUCK: 当前操作无法继续".to_string());
             return (
                 ExecutionResult {
                     success: false,

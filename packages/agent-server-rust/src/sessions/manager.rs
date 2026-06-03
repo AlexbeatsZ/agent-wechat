@@ -1,5 +1,7 @@
-use crate::db::get_db;
+use crate::db::{get_db, queries};
 use crate::ia::types::Session;
+use crate::tools::wechat_db::{find_account_dir, find_account_dir_from_disk, find_wechat_pid};
+use crate::tools::wechat_keys::{extract_keys_async, needs_key_extraction, store_keys};
 use rusqlite::params;
 
 /// Convert a DB row to a Session.
@@ -36,6 +38,59 @@ pub fn get_session(id_or_name: &str) -> Option<Session> {
         row_to_session,
     )
     .ok()
+}
+
+/// Ensure a logged-in WeChat window is bound to the session account directory.
+///
+/// QR login can complete without running LoginPlan, leaving `logged_in_user`
+/// empty even though the UI is logged in. All API surfaces that read DB-backed
+/// data should call this before returning "no chats/messages/files".
+pub async fn ensure_logged_in_account(session: &Session) -> Option<String> {
+    if let Some(account_dir) = session.logged_in_user.clone() {
+        return Some(account_dir);
+    }
+
+    let pid = find_wechat_pid();
+    let account_dir = pid
+        .and_then(find_account_dir)
+        .or_else(find_account_dir_from_disk)?;
+
+    {
+        let db = get_db();
+        let previous = queries::get_session_logged_in_user(&db, &session.id);
+        if previous.as_ref().filter(|p| *p != &account_dir).is_some() {
+            queries::clear_session_data(&db, &session.id);
+        }
+        queries::update_session_logged_in_user(&db, &session.id, Some(&account_dir));
+
+        if let Some(pid) = pid {
+            let now = chrono::Utc::now().to_rfc3339();
+            db.execute(
+                "UPDATE sessions SET wechat_pid = ?1, updated_at = ?2 WHERE id = ?3",
+                params![pid, now, session.id],
+            )
+            .ok();
+        }
+
+        if !needs_key_extraction(&db, &session.id, &account_dir) {
+            return Some(account_dir);
+        }
+    }
+
+    if let Some(pid) = pid {
+        let keys = extract_keys_async(pid).await;
+        if !keys.is_empty() {
+            let db = get_db();
+            store_keys(&db, &session.id, &account_dir, &keys);
+        } else {
+            tracing::warn!(
+                "[session] key extraction returned no keys for account {}",
+                account_dir
+            );
+        }
+    }
+
+    Some(account_dir)
 }
 
 /// List all sessions.

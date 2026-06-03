@@ -172,6 +172,8 @@ def map_agent_send_error(raw):
         "UPLOAD_FAILED": "上传或发送内容失败",
         "TIMEOUT": "发送超时",
         "AGENT_UNAVAILABLE": "agent-server 不可用",
+        "PLAN_STUCK": "当前操作无法继续，请刷新微信窗口后重试",
+        "QR_DECODE_FAILED": "微信已进入扫码登录页，但二维码识别失败，请通过 VNC 查看或重新切换账号",
     }
     return code or "SEND_FAILED", labels.get(code, error)
 
@@ -229,7 +231,7 @@ class Handler(BaseHTTPRequestHandler):
             elif "/media/" in path:
                 parts = path.split("/")
                 chat_id, local_id = unquote(parts[3]), unquote(parts[5])
-                media = agent_request(f"/api/messages/{quote(chat_id, safe='')}/media/{quote(local_id, safe='')}")
+                media = agent_request(f"/api/messages/{quote(chat_id, safe='')}/media/{quote(local_id, safe='')}?ensureDownload=true")
                 if media.get("type") == "pending" or media.get("retryable") is True or media.get("reason") in {"not_downloaded", "path_not_found", "pending"}:
                     self.send_json(202, {"error": "文件尚未下载到本机微信", "code": "MEDIA_PENDING", "reason": media.get("reason"), "filename": media.get("filename"), "retryable": True})
                     return
@@ -265,7 +267,10 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/login":
                 self.send_json(200, {"passwordEnabled": False, "authenticated": True})
             elif parsed.path == "/api/wechat-login":
-                raw = agent_request("/api/status/login", "POST", {})
+                body = self.read_body()
+                new_account = bool(body.get("newAccount"))
+                suffix = "?newAccount=true" if new_account else ""
+                raw = agent_request(f"/api/status/login{suffix}", "POST", {})
                 self.send_json(200, raw)
             elif parsed.path == "/api/logout":
                 raw = agent_request("/api/status/logout", "POST", {})

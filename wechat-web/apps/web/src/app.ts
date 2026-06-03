@@ -54,6 +54,7 @@ const state: {
   error: string;
   sending: boolean;
   filesOpen: boolean;
+  attachMenuOpen: boolean;
   serverFiles: ServerFileDto[];
   loginQrDataUrl: string;
   loginMessage: string;
@@ -65,6 +66,7 @@ const state: {
   error: "",
   sending: false,
   filesOpen: false,
+  attachMenuOpen: false,
   serverFiles: [],
   loginQrDataUrl: "",
   loginMessage: "",
@@ -94,6 +96,8 @@ function publicError(code?: string, message?: string): string {
     TIMEOUT: "发送超时",
     AGENT_UNAVAILABLE: "agent-server 不可用",
     MEDIA_PENDING: "文件尚未下载到本机微信",
+    PLAN_STUCK: "当前操作无法继续，请刷新微信窗口后重试",
+    QR_DECODE_FAILED: "微信已进入扫码登录页，但二维码识别失败，请通过 VNC 查看或重新切换账号",
   };
   return (code && labels[code]) || message || "操作失败";
 }
@@ -115,13 +119,29 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 async function refreshStatus(): Promise<void> {
   try {
     state.status = await api<StatusDto>("/api/status");
+    if (state.status.loggedIn) {
+      state.loginQrDataUrl = "";
+      state.loginMessage = "";
+    }
   } catch (error) {
     state.status = { agentReachable: false, loggedIn: false, status: "unknown", error: String(error) };
   }
   render();
 }
 
-async function startWechatLogin(): Promise<void> {
+async function pollLoginAfterQr(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 3000));
+    await refreshStatus();
+    if (state.status?.loggedIn) {
+      await refreshChats();
+      await refreshMessages();
+      return;
+    }
+  }
+}
+
+async function startWechatLogin(newAccount = false): Promise<void> {
   state.error = "";
   state.loginMessage = "正在获取微信登录二维码";
   state.loginQrDataUrl = "";
@@ -129,13 +149,19 @@ async function startWechatLogin(): Promise<void> {
   try {
     const result = await api<{ qrDataUrl?: string; state?: { status?: string }; success?: boolean; message?: string }>(
       "/api/wechat-login",
-      { method: "POST", body: "{}" },
+      { method: "POST", body: JSON.stringify({ newAccount }) },
     );
     state.loginQrDataUrl = result.qrDataUrl || "";
     state.loginMessage = result.qrDataUrl
       ? "请使用手机微信扫码登录"
       : result.message || result.state?.status || "登录流程已启动";
+    if (result.state?.status === "qr_decode_failed") {
+      state.error = publicError("QR_DECODE_FAILED", result.message);
+    }
     await refreshStatus();
+    if (result.qrDataUrl || ["phone_confirm", "loading"].includes(result.state?.status || "")) {
+      void pollLoginAfterQr();
+    }
   } catch (error) {
     state.loginMessage = "";
     state.error = error instanceof Error ? error.message : String(error);
@@ -146,6 +172,9 @@ async function startWechatLogin(): Promise<void> {
 async function refreshChats(): Promise<void> {
   state.chats = await api<ChatDto[]>("/api/chats?limit=120&offset=0");
   if (!state.selectedChatId && state.chats[0]) state.selectedChatId = state.chats[0].id;
+  if (state.selectedChatId && !state.chats.some((chat) => chat.id === state.selectedChatId)) {
+    state.selectedChatId = state.chats[0]?.id || "";
+  }
   render();
 }
 
@@ -217,7 +246,8 @@ async function sendPayload(payload: Record<string, unknown>, optimisticText?: st
       { method: "POST", body: JSON.stringify(payload) },
     );
     if (!result.ok) throw new Error(publicError(result.code, result.error));
-    window.setTimeout(() => void refreshMessages(), 900);
+    await refreshMessages();
+    window.setTimeout(() => void refreshMessages(), 1200);
   } catch (error) {
     state.error = error instanceof Error ? error.message : String(error);
   } finally {
@@ -276,6 +306,8 @@ async function loadServerFiles(): Promise<void> {
 }
 
 function renderMessages(): string {
+  if (!state.selectedChatId) return `<div class="empty-state">请选择左侧会话</div>`;
+  if (!state.messages.length) return `<div class="empty-state">暂无消息，或正在读取微信数据库</div>`;
   return state.messages.map((message) => {
     const meta = escapeHtml(message.senderName || message.senderId || (message.direction === "out" ? "我" : "对方"));
     if (message.type === "system") return `<div class="system-message">${escapeHtml(message.text || "")}</div>`;
@@ -301,22 +333,29 @@ function render(): void {
           <div class="login-qr-panel">
             ${state.loginQrDataUrl ? `<img src="${state.loginQrDataUrl}" alt="微信登录二维码">` : ""}
             <span>${escapeHtml(state.loginMessage)}</span>
+            <button id="switch-login-btn">切换账号二维码</button>
           </div>` : ""}
         <div class="toolbar"><button id="server-files">服务器文件</button><button id="refresh">刷新</button></div>
         ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ""}
-        <div class="chat-list">${state.chats.map((item) => `
+        <div class="chat-list">${state.chats.length ? state.chats.map((item) => `
           <button class="chat-item ${item.id === state.selectedChatId ? "active" : ""}" data-chat="${escapeHtml(item.id)}">
             <div><strong>${escapeHtml(item.displayName)}</strong><span>${escapeHtml(item.lastMessagePreview || "")}</span></div>
             <small>${labelForKind(item.kind)}${item.canSend ? "" : " / 只读"}</small>
             ${item.unreadCount ? `<em>${item.unreadCount}</em>` : ""}
-          </button>`).join("")}</div>
+          </button>`).join("") : `<div class="empty-state">暂无会话。若刚扫码登录，请稍等数据库密钥提取完成后刷新。</div>`}</div>
       </aside>
       <main class="conversation">
         <header><h2>${escapeHtml(chat?.displayName || "选择聊天")}</h2><span>${chat ? `${labelForKind(chat.kind)}${chat.canSend ? "" : " / 只读"}` : ""}</span></header>
         <div class="messages">${renderMessages()}</div>
         <footer class="composer ${chat && !chat.canSend ? "readonly" : ""}">
           ${chat && !chat.canSend ? `<div class="readonly-note">当前会话为只读，不能发送消息</div>` : ""}
-          <button id="plus-btn" ${!chat?.canSend ? "disabled" : ""}>+</button>
+          <div class="attach-wrap">
+            <button id="plus-btn" ${!chat?.canSend ? "disabled" : ""} aria-label="添加附件">+</button>
+            ${state.attachMenuOpen ? `<div class="attach-menu">
+              <button id="pick-image">发送图片</button>
+              <button id="pick-file">发送文件</button>
+            </div>` : ""}
+          </div>
           <textarea id="composer-input" ${!chat?.canSend ? "disabled" : ""} placeholder="输入消息，Ctrl+V 可粘贴文本/图片/文件"></textarea>
           <button id="send-btn" ${state.sending || !chat?.canSend ? "disabled" : ""}>${state.sending ? "发送中" : "发送"}</button>
           <input id="file-input" type="file" hidden>
@@ -338,6 +377,7 @@ function bindEvents(): void {
       void startWechatLogin();
     }
   });
+  document.querySelector("#switch-login-btn")?.addEventListener("click", () => void startWechatLogin(true));
   document.querySelector("#server-files")?.addEventListener("click", () => void loadServerFiles().catch((e) => { state.error = String(e); render(); }));
   document.querySelector("#close-files")?.addEventListener("click", () => { state.filesOpen = false; render(); });
   document.querySelectorAll<HTMLButtonElement>("[data-chat]").forEach((button) => button.addEventListener("click", () => {
@@ -346,10 +386,25 @@ function bindEvents(): void {
     void refreshMessages();
   }));
   document.querySelector("#send-btn")?.addEventListener("click", () => void sendText());
-  document.querySelector("#plus-btn")?.addEventListener("click", () => document.querySelector<HTMLInputElement>("#file-input")?.click());
+  document.querySelector("#plus-btn")?.addEventListener("click", () => {
+    state.attachMenuOpen = !state.attachMenuOpen;
+    render();
+  });
+  document.querySelector("#pick-image")?.addEventListener("click", () => {
+    state.attachMenuOpen = false;
+    document.querySelector<HTMLInputElement>("#image-input")?.click();
+  });
+  document.querySelector("#pick-file")?.addEventListener("click", () => {
+    state.attachMenuOpen = false;
+    document.querySelector<HTMLInputElement>("#file-input")?.click();
+  });
   document.querySelector("#file-input")?.addEventListener("change", (event) => {
     const file = (event.currentTarget as HTMLInputElement).files?.[0];
-    if (file) void sendFile(file, file.type.startsWith("image/"));
+    if (file) void sendFile(file, false);
+  });
+  document.querySelector("#image-input")?.addEventListener("change", (event) => {
+    const file = (event.currentTarget as HTMLInputElement).files?.[0];
+    if (file) void sendFile(file, true);
   });
   document.querySelector("#composer-input")?.addEventListener("keydown", (event) => {
     if (event instanceof KeyboardEvent && event.key === "Enter" && !event.shiftKey) {

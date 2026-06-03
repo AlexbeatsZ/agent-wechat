@@ -10,7 +10,7 @@ use crate::db::get_db;
 use crate::execution::run_execution_loop;
 use crate::ia::types::{Chat, SubscriptionEvent};
 use crate::plans::chat_open::{ChatOpenParams, ChatOpenPlan};
-use crate::sessions::manager::get_session;
+use crate::sessions::manager::{ensure_logged_in_account, get_session};
 use crate::tools::wechat_chats;
 use crate::tools::wechat_db::{find_wechat_pid, list_account_dbs};
 use crate::tools::wechat_keys::{extract_keys_async, get_stored_keys, store_keys};
@@ -32,8 +32,8 @@ pub async fn list_chats(Query(params): Query<ListParams>) -> Json<Vec<Chat>> {
         Some(s) => s,
         None => return Json(Vec::new()),
     };
-    let logged_in_user = match &session.logged_in_user {
-        Some(u) => u.clone(),
+    let logged_in_user = match ensure_logged_in_account(&session).await {
+        Some(u) => u,
         None => return Json(Vec::new()),
     };
 
@@ -77,8 +77,8 @@ pub async fn get_chat(Path(id): Path<String>) -> Json<Option<Chat>> {
         Some(s) => s,
         None => return Json(None),
     };
-    let logged_in_user = match &session.logged_in_user {
-        Some(u) => u.clone(),
+    let logged_in_user = match ensure_logged_in_account(&session).await {
+        Some(u) => u,
         None => return Json(None),
     };
 
@@ -122,8 +122,8 @@ pub async fn find_chats(Query(params): Query<FindParams>) -> Json<Vec<Chat>> {
         Some(s) => s,
         None => return Json(Vec::new()),
     };
-    let logged_in_user = match &session.logged_in_user {
-        Some(u) => u.clone(),
+    let logged_in_user = match ensure_logged_in_account(&session).await {
+        Some(u) => u,
         None => return Json(Vec::new()),
     };
 
@@ -178,7 +178,7 @@ pub async fn open_chat(
         }
     };
 
-    if session.logged_in_user.is_none() {
+    if ensure_logged_in_account(&session).await.is_none() {
         return Json(serde_json::json!({
             "ok": false,
             "error": "NOT_LOGGED_IN"

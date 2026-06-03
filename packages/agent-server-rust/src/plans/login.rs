@@ -191,6 +191,12 @@ fn handle_authenticating(
         }
 
         MainWindowView::LoginPhoneConfirm => {
+            if params.new_account {
+                return Some(SelectedAction {
+                    action: actions::click_selector(r#"push-button[name="Cancel"]"#),
+                    frame: frame(),
+                });
+            }
             if !plan_state.emitted_phone_confirm {
                 plan_state.emitted_phone_confirm = true;
                 return Some(SelectedAction {

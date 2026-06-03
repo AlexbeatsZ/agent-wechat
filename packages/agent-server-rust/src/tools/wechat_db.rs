@@ -132,6 +132,58 @@ pub fn find_account_dir(wechat_pid: i64) -> Option<String> {
     None
 }
 
+/// Detect a WeChat account directory from the on-disk xwechat_files tree.
+///
+/// This is a fallback for QR logins that complete outside the LoginPlan. In
+/// that path the process may not keep database files open long enough for
+/// /proc/<pid>/fd scanning, but the account data directory already exists.
+pub fn find_account_dir_from_disk() -> Option<String> {
+    let roots = [
+        PathBuf::from("/home/wechat/xwechat_files"),
+        PathBuf::from("/home/wechat/Documents/xwechat_files"),
+    ];
+
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        let mut candidates = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if name == "all_users" || name == "WMPF" {
+                continue;
+            }
+            let session_db = path.join("db_storage").join("session").join("session.db");
+            let contact_db = path.join("db_storage").join("contact").join("contact.db");
+            if session_db.exists() && contact_db.exists() {
+                let modified = session_db
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok();
+                candidates.push((name.to_string(), modified));
+            }
+        }
+        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+        if let Some((account_dir, _)) = candidates.into_iter().next() {
+            return Some(account_dir);
+        }
+    }
+
+    None
+}
+
+pub fn find_current_account_dir(wechat_pid: Option<i64>) -> Option<String> {
+    wechat_pid
+        .and_then(find_account_dir)
+        .or_else(find_account_dir_from_disk)
+}
+
 /// List all .db files that exist on disk for a given account.
 pub fn list_account_dbs(account_dir: &str) -> Vec<String> {
     let base_paths = [

@@ -33,18 +33,6 @@ impl IAState for LoginQrState {
             });
         }
 
-        let qr = decode_qr_from_base64(args.screenshot);
-        let has_wechat_qr = qr
-            .as_ref()
-            .map(|r| r.data.starts_with("http://weixin.qq.com/x/"))
-            .unwrap_or(false);
-        if !has_wechat_qr {
-            return Ok(IdentifyResult {
-                identified: false,
-                frame: None,
-            });
-        }
-
         Ok(IdentifyResult {
             identified: true,
             frame: find_frame_for(args.a11y, r#"label[name*="Scan to log in"]"#),
@@ -59,9 +47,13 @@ impl IAState for LoginQrState {
         let mut state = args.prev.clone();
         state.main_window.view = MainWindowView::LoginQr;
         state.main_window.is_logged_in = false;
+        state.main_window.qr_data = None;
+        state.main_window.qr_binary_data = None;
         if let Some(qr_result) = qr {
-            state.main_window.qr_data = Some(qr_result.data);
-            state.main_window.qr_binary_data = Some(qr_result.binary_data);
+            if qr_result.data.starts_with("http://weixin.qq.com/x/") {
+                state.main_window.qr_data = Some(qr_result.data);
+                state.main_window.qr_binary_data = Some(qr_result.binary_data);
+            }
         }
         state.main_window.close_button_bounds = wb.close_button_bounds;
         state.main_window.minimize_button_bounds = wb.minimize_button_bounds;
