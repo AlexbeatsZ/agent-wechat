@@ -416,6 +416,19 @@ fn collect_matches<'a>(
     }
 }
 
+/// Check if an a11y node is a WeChat send button.
+/// Compatible with English/Chinese, with or without shortcut hints.
+pub fn is_send_button(node: &A11yNode) -> bool {
+    if node.role != "push-button" {
+        return false;
+    }
+    let name = node.name.trim();
+    matches!(
+        name,
+        "Send(S)" | "Send" | "发送(S)" | "发送" | "發送(S)" | "發送"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

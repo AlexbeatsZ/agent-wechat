@@ -1,6 +1,6 @@
 use super::Plan;
 use crate::ia::actions;
-use crate::ia::selectors::query_selector;
+use crate::ia::selectors::{is_send_button, query_selector};
 use crate::ia::types::*;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
 use crate::tools::exec::{exec_command, ExecOptions};
@@ -49,7 +49,7 @@ fn find_edit_send_pair(node: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
     if let Some(children) = &node.children {
         let send_btn = children
             .iter()
-            .find(|c| c.role == "push-button" && c.name == "Send(S)");
+            .find(|c| is_send_button(c));
         let edit_node = children.iter().find(|c| {
             c.role == "text"
                 && c.states
@@ -60,6 +60,22 @@ fn find_edit_send_pair(node: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
 
         if let (Some(edit), Some(send)) = (edit_node, send_btn) {
             return Some((edit, send));
+        }
+
+        // Log diagnostic info when pair not found at this level
+        if send_btn.is_none() || edit_node.is_none() {
+            let btns: Vec<&str> = children
+                .iter()
+                .filter(|c| c.role == "push-button")
+                .map(|c| c.name.as_str())
+                .collect();
+            if !btns.is_empty() {
+                tracing::debug!(
+                    "[find_edit_send_pair] push-buttons: {:?}, edit_found: {}",
+                    btns,
+                    edit_node.is_some()
+                );
+            }
         }
 
         // Recurse

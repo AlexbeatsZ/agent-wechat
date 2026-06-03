@@ -47,6 +47,24 @@ pub fn get_session(id_or_name: &str) -> Option<Session> {
 /// data should call this before returning "no chats/messages/files".
 pub async fn ensure_logged_in_account(session: &Session) -> Option<String> {
     if let Some(account_dir) = session.logged_in_user.clone() {
+        let needs_extraction = {
+            let db = get_db();
+            needs_key_extraction(&db, &session.id, &account_dir)
+        };
+        if needs_extraction {
+            if let Some(pid) = find_wechat_pid() {
+                let keys = extract_keys_async(pid).await;
+                if !keys.is_empty() {
+                    let db = get_db();
+                    store_keys(&db, &session.id, &account_dir, &keys);
+                } else {
+                    tracing::warn!(
+                        "[session] key extraction returned no keys for existing account {}",
+                        account_dir
+                    );
+                }
+            }
+        }
         return Some(account_dir);
     }
 

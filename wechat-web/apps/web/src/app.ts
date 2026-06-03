@@ -58,6 +58,8 @@ const state: {
   serverFiles: ServerFileDto[];
   loginQrDataUrl: string;
   loginMessage: string;
+  loginQrFailed: boolean;
+  previewImageUrl: string;
 } = {
   status: null,
   chats: [],
@@ -70,6 +72,8 @@ const state: {
   serverFiles: [],
   loginQrDataUrl: "",
   loginMessage: "",
+  loginQrFailed: false,
+  previewImageUrl: "",
 };
 
 function labelForKind(kind: ChatKind): string {
@@ -86,7 +90,7 @@ function labelForKind(kind: ChatKind): string {
 
 function publicError(code?: string, message?: string): string {
   const labels: Record<string, string> = {
-    CHAT_NOT_OPENED: "聊天未打开，请重新选择会话后再试",
+    CHAT_NOT_OPENED: "聊天未打开",
     READONLY_CHAT: "当前会话不支持发送",
     INPUT_NOT_FOUND: "未找到微信输入框",
     SEND_BUTTON_NOT_FOUND: "未找到发送按钮",
@@ -111,7 +115,9 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const text = await response.text();
   const body = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    throw new Error(publicError(body?.code, body?.error));
+    const label = publicError(body?.code, body?.error);
+    const detail = body?.error && body?.code ? `: ${body.error}` : "";
+    throw new Error(label + detail);
   }
   return body as T;
 }
@@ -145,6 +151,7 @@ async function startWechatLogin(newAccount = false): Promise<void> {
   state.error = "";
   state.loginMessage = "正在获取微信登录二维码";
   state.loginQrDataUrl = "";
+  state.loginQrFailed = false;
   render();
   try {
     const result = await api<{ qrDataUrl?: string; state?: { status?: string }; success?: boolean; message?: string }>(
@@ -157,6 +164,7 @@ async function startWechatLogin(newAccount = false): Promise<void> {
       : result.message || result.state?.status || "登录流程已启动";
     if (result.state?.status === "qr_decode_failed") {
       state.error = publicError("QR_DECODE_FAILED", result.message);
+      state.loginQrFailed = true;
     }
     await refreshStatus();
     if (result.qrDataUrl || ["phone_confirm", "loading"].includes(result.state?.status || "")) {
@@ -314,7 +322,7 @@ function renderMessages(): string {
     const body = message.type === "file"
       ? `<button class="file-link" data-download="${message.localId}">下载 ${escapeHtml(message.fileName || "文件")} ${formatBytes(message.fileSize)}</button>`
       : message.type === "image"
-        ? `<button class="file-link" data-download="${message.localId}">下载图片</button>`
+        ? `<div class="image-bubble"><img class="chat-image" data-chat-id="${message.chatId}" data-media-local-id="${message.mediaLocalId || ""}" alt="图片消息" loading="lazy" /><div class="image-actions"><button class="image-preview-btn" data-preview-image="${message.localId}">查看大图</button><button class="file-link" data-download="${message.localId}">下载原图</button></div></div>`
         : `<div class="message-text">${escapeHtml(message.text || "")}</div>`;
     return `<div class="message-row ${message.direction === "out" ? "out" : "in"}"><div class="message-meta">${meta}</div><div class="bubble">${body}</div><time>${new Date(message.timestamp).toLocaleString()}</time></div>`;
   }).join("");
@@ -329,7 +337,12 @@ function render(): void {
           <div><strong>${state.status?.loggedIn ? "已登录" : "未登录"}</strong><span>${escapeHtml(state.status?.loggedInUser || state.status?.status || "unknown")}</span></div>
           <button id="login-btn">${state.status?.loggedIn ? "刷新" : "登录微信"}</button>
         </div>
-        ${!state.status?.loggedIn && (state.loginQrDataUrl || state.loginMessage) ? `
+        ${!state.status?.loggedIn && state.loginQrFailed ? `
+          <div class="login-qr-panel">
+            <div class="qr-failed-icon">QR</div>
+            <span>${escapeHtml(state.loginMessage || "二维码识别失败")}</span>
+            <button id="switch-login-btn">切换账号二维码</button>
+          </div>` : !state.status?.loggedIn && (state.loginQrDataUrl || state.loginMessage) ? `
           <div class="login-qr-panel">
             ${state.loginQrDataUrl ? `<img src="${state.loginQrDataUrl}" alt="微信登录二维码">` : ""}
             <span>${escapeHtml(state.loginMessage)}</span>
@@ -364,8 +377,27 @@ function render(): void {
       </main>
     </div>
     ${state.filesOpen ? `<div class="modal"><div class="modal-panel"><header><h3>服务器文件</h3><button id="close-files">关闭</button></header><div class="server-files">${state.serverFiles.map((file) => `<a class="server-file" href="/api/files/${encodeURIComponent(file.id)}/download"><strong>${escapeHtml(file.filename)}</strong><span>${formatBytes(file.size)} ${escapeHtml(file.contentType)} ${new Date(file.modifiedAt).toLocaleString()}</span><small>${escapeHtml(file.sourcePathHint)}</small></a>`).join("")}</div></div></div>` : ""}
+    ${state.previewImageUrl ? `<div class="modal image-preview-modal" id="close-preview"><div class="modal-panel image-preview-panel"><img src="${state.previewImageUrl}" alt="大图预览" /></div></div>` : ""}
   `;
   bindEvents();
+  loadChatImages();
+}
+
+function loadChatImages(): void {
+  document.querySelectorAll<HTMLImageElement>("img.chat-image").forEach((img) => {
+    if (img.src && !img.src.endsWith("/")) return;
+    const chatId = img.dataset.chatId;
+    const mediaLocalId = img.dataset.mediaLocalId;
+    if (!chatId || !mediaLocalId) return;
+    img.src = `/api/chats/${encodeURIComponent(chatId)}/media/${encodeURIComponent(mediaLocalId)}`;
+    img.onerror = () => {
+      img.style.display = "none";
+      const fallback = document.createElement("div");
+      fallback.className = "image-load-failed";
+      fallback.textContent = "图片加载失败";
+      img.parentElement?.appendChild(fallback);
+    };
+  });
 }
 
 function bindEvents(): void {
@@ -391,10 +423,12 @@ function bindEvents(): void {
     render();
   });
   document.querySelector("#pick-image")?.addEventListener("click", () => {
+    if (!selectedChat()?.canSend) return;
     state.attachMenuOpen = false;
     document.querySelector<HTMLInputElement>("#image-input")?.click();
   });
   document.querySelector("#pick-file")?.addEventListener("click", () => {
+    if (!selectedChat()?.canSend) return;
     state.attachMenuOpen = false;
     document.querySelector<HTMLInputElement>("#file-input")?.click();
   });
@@ -413,6 +447,7 @@ function bindEvents(): void {
     }
   });
   document.querySelector("#composer-input")?.addEventListener("paste", (event) => {
+    if (!selectedChat()?.canSend) return;
     const items = (event as ClipboardEvent).clipboardData?.items || [];
     for (const item of Array.from(items)) {
       const file = item.getAsFile();
@@ -428,6 +463,19 @@ function bindEvents(): void {
     const message = state.messages.find((m) => m.localId === localId);
     if (message) void downloadMessage(message);
   }));
+  document.querySelectorAll<HTMLButtonElement>("[data-preview-image]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const localId = Number(button.dataset.previewImage);
+      const message = state.messages.find((m) => m.localId === localId);
+      if (!message || !message.mediaLocalId) return;
+      state.previewImageUrl = `/api/chats/${encodeURIComponent(message.chatId)}/media/${encodeURIComponent(message.mediaLocalId)}`;
+      render();
+    });
+  });
+  document.querySelector("#close-preview")?.addEventListener("click", () => {
+    state.previewImageUrl = "";
+    render();
+  });
 }
 
 void refreshAll();

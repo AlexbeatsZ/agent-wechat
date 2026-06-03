@@ -163,7 +163,7 @@ def map_agent_send_error(raw):
     if not code and isinstance(error, str) and ":" in error:
         code, error = [part.strip() for part in error.split(":", 1)]
     labels = {
-        "CHAT_NOT_OPENED": "聊天未打开",
+        "CHAT_NOT_OPENED": None,  # 使用后端返回的具体原因
         "READONLY_CHAT": "当前会话不支持发送",
         "INPUT_NOT_FOUND": "未找到微信输入框",
         "SEND_BUTTON_NOT_FOUND": "未找到发送按钮",
@@ -175,7 +175,7 @@ def map_agent_send_error(raw):
         "PLAN_STUCK": "当前操作无法继续，请刷新微信窗口后重试",
         "QR_DECODE_FAILED": "微信已进入扫码登录页，但二维码识别失败，请通过 VNC 查看或重新切换账号",
     }
-    return code or "SEND_FAILED", labels.get(code, error)
+    return code or "SEND_FAILED", labels.get(code) or error
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -239,11 +239,17 @@ class Handler(BaseHTTPRequestHandler):
                 if not data:
                     self.send_json(404, {"error": media.get("reason") or "media is not available", "code": "MEDIA_NOT_AVAILABLE", "filename": media.get("filename")})
                     return
+                ct = content_type(media)
                 raw = base64.b64decode(data)
                 filename = media.get("filename") or f"media_{local_id}"
                 self.send_response(200)
-                self.send_header("Content-Type", content_type(media))
-                self.send_header("Content-Disposition", attachment_header(filename))
+                self.send_header("Content-Type", ct)
+                if ct.startswith("image/"):
+                    safe = (filename or "image").replace('"', "")
+                    encoded = quote(filename or "image", safe="")
+                    self.send_header("Content-Disposition", f'inline; filename="{safe}"; filename*=UTF-8\'\'{encoded}')
+                else:
+                    self.send_header("Content-Disposition", attachment_header(filename))
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)

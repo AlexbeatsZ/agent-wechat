@@ -1,6 +1,6 @@
 use super::Plan;
 use crate::ia::actions;
-use crate::ia::selectors::{query_selector, query_selector_all};
+use crate::ia::selectors::{is_send_button, query_selector, query_selector_all};
 use crate::ia::types::*;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
 use crate::tools::exec::ExecOptions;
@@ -30,9 +30,7 @@ fn find_edit_area(a11y: &A11yNode) -> Option<&A11yNode> {
 
 fn find_edit_near_send(node: &A11yNode) -> Option<&A11yNode> {
     if let Some(children) = &node.children {
-        let has_send = children
-            .iter()
-            .any(|c| c.role == "push-button" && c.name == "Send(S)");
+        let has_send = children.iter().any(|c| is_send_button(c));
         let edit_node = children.iter().find(|c| {
             c.role == "text"
                 && c.states
