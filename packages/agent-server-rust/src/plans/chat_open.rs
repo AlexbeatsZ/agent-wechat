@@ -1,5 +1,6 @@
 use super::Plan;
 use crate::ia::actions;
+use crate::ia::helpers::frame_hint_from_node;
 use crate::ia::selectors::{is_send_button, query_selector, query_selector_all};
 use crate::ia::types::*;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
@@ -30,14 +31,8 @@ fn find_edit_area(a11y: &A11yNode) -> Option<&A11yNode> {
 
 fn find_edit_near_send(node: &A11yNode) -> Option<&A11yNode> {
     if let Some(children) = &node.children {
-        let has_send = children.iter().any(|c| is_send_button(c));
-        let edit_node = children.iter().find(|c| {
-            c.role == "text"
-                && c.states
-                    .as_ref()
-                    .map(|s| s.iter().any(|st| st == "EDITABLE"))
-                    .unwrap_or(false)
-        });
+        let has_send = find_send_button(node).is_some();
+        let edit_node = find_editable_text(node);
 
         if has_send {
             if let Some(edit) = edit_node {
@@ -50,6 +45,53 @@ fn find_edit_near_send(node: &A11yNode) -> Option<&A11yNode> {
             if let Some(result) = find_edit_near_send(child) {
                 return Some(result);
             }
+        }
+    }
+    None
+}
+
+fn find_send_button(node: &A11yNode) -> Option<&A11yNode> {
+    if is_send_button(node) {
+        return Some(node);
+    }
+    for child in node.children.as_deref().unwrap_or(&[]) {
+        if let Some(found) = find_send_button(child) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_editable_text(node: &A11yNode) -> Option<&A11yNode> {
+    let is_editable = node
+        .states
+        .as_ref()
+        .map(|s| s.iter().any(|st| st == "EDITABLE"))
+        .unwrap_or(false);
+    if is_editable && matches!(node.role.as_str(), "text" | "paragraph" | "entry") {
+        return Some(node);
+    }
+    for child in node.children.as_deref().unwrap_or(&[]) {
+        if let Some(found) = find_editable_text(child) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_weixin_info_popup_close(a11y: &A11yNode) -> Option<(Bounds, Option<FrameHint>)> {
+    if a11y.role == "frame"
+        && a11y.name == "Weixin"
+        && query_selector(a11y, r#"label[name=/^Weixin [0-9.]+/]"#).is_some()
+    {
+        let close = query_selector(a11y, r#"tool-bar push-button[name="Disable"]"#)
+            .or_else(|| query_selector(a11y, r#"push-button[name="Disable"]"#))?;
+        return Some((close.bounds.clone()?, frame_hint_from_node(a11y)));
+    }
+
+    for child in a11y.children.as_deref().unwrap_or(&[]) {
+        if let Some(found) = find_weixin_info_popup_close(child) {
+            return Some(found);
         }
     }
     None
@@ -88,6 +130,13 @@ impl Plan for ChatOpenPlan {
         a11y: &A11yNode,
         exec_options: &ExecOptions,
     ) -> Option<SelectedAction> {
+        if let Some((bounds, frame)) = find_weixin_info_popup_close(a11y) {
+            return Some(SelectedAction {
+                action: actions::click_bounds(&bounds),
+                frame,
+            });
+        }
+
         // Dismiss popups
         if state.popup.is_some() && identified.popup.is_some() {
             return Some(SelectedAction {
