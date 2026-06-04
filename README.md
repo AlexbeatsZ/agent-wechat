@@ -134,9 +134,15 @@ volumes:
 pnpm install
 pnpm build                   # Build CLI + shared types
 pnpm dev:deploy              # Cross-compile Rust server + deploy to running container
+pnpm dev:deploy:web          # Build and deploy Web UI + BFF on port 3001
+pnpm dev:deploy:all --sync-tools # Deploy backend, tools, Web UI, and BFF
 pnpm build:image:arm64       # Build Docker image (Apple Silicon)
 pnpm build:image:amd64       # Build Docker image (Intel)
 ```
+
+`pnpm dev` starts the agent-server development container only. It live-mounts `docker/tools` into `/opt/tools`; non-dev containers need `pnpm dev:deploy -- --sync-tools` or an image rebuild after tool changes. Web source changes under `wechat-web/apps/web/src` need `pnpm dev:deploy:web`.
+
+See [`wechat-web/README.md`](./wechat-web/README.md) for Web UI and BFF deployment details.
 
 See [CLAUDE.md](./CLAUDE.md) for full technical documentation.
 
@@ -145,3 +151,4 @@ See [CLAUDE.md](./CLAUDE.md) for full technical documentation.
 | Port | Service |
 |------|---------|
 | 6174 | Agent server REST API + VNC web viewer at `/vnc/` |
+| 3001 | Web UI + BFF |

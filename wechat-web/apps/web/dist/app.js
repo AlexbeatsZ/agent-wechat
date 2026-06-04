@@ -3,6 +3,8 @@ const root = document.querySelector("#root");
 if (!root)
     throw new Error("root missing");
 const appRoot = root;
+const MAX_UPLOAD_BYTES = 35 * 1024 * 1024;
+const imageObjectUrls = new Map();
 const state = {
     status: null,
     chats: [],
@@ -160,6 +162,10 @@ function fileToBase64(file) {
         reader.readAsDataURL(file);
     });
 }
+async function responseError(response) {
+    const body = await response.json().catch(() => ({}));
+    return publicError(body.code, body.error);
+}
 async function sendPayload(payload, optimisticText) {
     const chat = selectedChat();
     if (!chat)
@@ -208,6 +214,11 @@ async function sendText() {
     await sendPayload({ type: "text", text }, text);
 }
 async function sendFile(file, asImage) {
+    if (file.size > MAX_UPLOAD_BYTES) {
+        state.error = `文件过大，当前 Web 上传建议不超过 ${formatBytes(MAX_UPLOAD_BYTES)}`;
+        render();
+        return;
+    }
     const base64 = await fileToBase64(file);
     await sendPayload({
         type: asImage ? "image" : "file",
@@ -222,14 +233,12 @@ async function downloadMessage(message) {
     state.error = "";
     const response = await fetch(`/api/chats/${encodeURIComponent(message.chatId)}/media/${encodeURIComponent(message.mediaLocalId)}`, { credentials: "include" });
     if (response.status === 202) {
-        const body = await response.json().catch(() => ({}));
-        state.error = publicError(body.code, body.error);
+        state.error = await responseError(response);
         render();
         return;
     }
     if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        state.error = publicError(body.code, body.error);
+        state.error = await responseError(response);
         render();
         return;
     }
@@ -240,6 +249,32 @@ async function downloadMessage(message) {
     link.download = message.fileName || `media-${message.localId}`;
     link.click();
     URL.revokeObjectURL(url);
+}
+async function loadImageBlobUrl(chatId, mediaLocalId) {
+    const cacheKey = `${chatId}:${mediaLocalId}`;
+    const cached = imageObjectUrls.get(cacheKey);
+    if (cached)
+        return cached;
+    const response = await fetch(`/api/chats/${encodeURIComponent(chatId)}/media/${encodeURIComponent(mediaLocalId)}`, {
+        credentials: "include",
+    });
+    if (response.status === 202) {
+        const message = await responseError(response);
+        throw new Error(message === publicError("MEDIA_PENDING") ? "图片尚未下载到本机微信" : message);
+    }
+    if (!response.ok) {
+        throw new Error(await responseError(response));
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    imageObjectUrls.set(cacheKey, url);
+    return url;
+}
+function setPreviewImageUrl(url) {
+    state.previewImageUrl = url;
+}
+function clearPreviewImageUrl() {
+    state.previewImageUrl = "";
 }
 async function loadServerFiles() {
     state.filesOpen = true;
@@ -319,20 +354,24 @@ function render() {
 }
 function loadChatImages() {
     document.querySelectorAll("img.chat-image").forEach((img) => {
-        if (img.src && !img.src.endsWith("/"))
+        if (img.dataset.loading === "true" || (img.src && !img.src.endsWith("/")))
             return;
         const chatId = img.dataset.chatId;
         const mediaLocalId = img.dataset.mediaLocalId;
         if (!chatId || !mediaLocalId)
             return;
-        img.src = `/api/chats/${encodeURIComponent(chatId)}/media/${encodeURIComponent(mediaLocalId)}`;
-        img.onerror = () => {
+        img.dataset.loading = "true";
+        void loadImageBlobUrl(chatId, mediaLocalId).then((url) => {
+            img.src = url;
+            img.dataset.loading = "false";
+        }).catch((error) => {
+            img.dataset.loading = "false";
             img.style.display = "none";
             const fallback = document.createElement("div");
             fallback.className = "image-load-failed";
-            fallback.textContent = "图片加载失败";
+            fallback.textContent = error instanceof Error ? error.message : "图片加载失败";
             img.parentElement?.appendChild(fallback);
-        };
+        });
     });
 }
 function bindEvents() {
@@ -411,12 +450,17 @@ function bindEvents() {
             const message = state.messages.find((m) => m.localId === localId);
             if (!message || !message.mediaLocalId)
                 return;
-            state.previewImageUrl = `/api/chats/${encodeURIComponent(message.chatId)}/media/${encodeURIComponent(message.mediaLocalId)}`;
-            render();
+            void loadImageBlobUrl(message.chatId, message.mediaLocalId).then((url) => {
+                setPreviewImageUrl(url);
+                render();
+            }).catch((error) => {
+                state.error = error instanceof Error ? error.message : String(error);
+                render();
+            });
         });
     });
     document.querySelector("#close-preview")?.addEventListener("click", () => {
-        state.previewImageUrl = "";
+        clearPreviewImageUrl();
         render();
     });
 }

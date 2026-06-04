@@ -82,6 +82,7 @@ docker run --rm \
 
 echo "==> Deploying to container: $CONTAINER"
 echo "Note: dev-deploy only updates the Rust server binary. If you changed docker/tools, rerun with --sync-tools or rebuild the image."
+echo "Note: containers started by pnpm dev live-mount docker/tools; non-dev containers need --sync-tools or an image rebuild."
 # Extract binary from cache volume via a temporary container
 TMP_CT=$(docker create -v "$CACHE_VOLUME:/target:ro" "$BUILDER_IMAGE")
 docker cp "$TMP_CT:/target/$BINARY_DIR/agent-server" - | docker cp - "$CONTAINER:/opt/agent-server/"
@@ -105,3 +106,7 @@ fi
 # Kill server process — entrypoint restart loop brings it back with new binary
 docker exec "$CONTAINER" pkill -f '/opt/agent-server/agent-server' 2>/dev/null || true
 echo "==> Server restarting with new binary"
+echo "Next steps:"
+echo "  Web UI changed: pnpm dev:deploy:web"
+echo "  docker/tools changed in a non-dev container: pnpm dev:deploy -- --sync-tools"
+echo "  Full update: pnpm dev:deploy:all --sync-tools"

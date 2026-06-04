@@ -1,4 +1,4 @@
-FROM agent-wechat:deploy-local
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -13,5 +13,4 @@ ENV AGENT_WECHAT_TOKEN_FILE=/run/secrets/agent-wechat-token
 
 EXPOSE 3001
 
-ENTRYPOINT []
 CMD ["python3", "/app/deploy_server.py"]

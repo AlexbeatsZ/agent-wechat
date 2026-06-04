@@ -153,6 +153,12 @@ importers:
         specifier: ^1.20.2
         version: 1.20.2(rxjs@7.8.2)
 
+  wechat-web/apps/web:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
 packages:
 
   '@agentclientprotocol/sdk@0.21.0':
