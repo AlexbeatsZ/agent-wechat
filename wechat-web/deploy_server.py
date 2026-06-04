@@ -166,7 +166,7 @@ def proxy_remote_media(handler, media, local_id):
             handler.send_response(200)
             handler.send_header("Content-Type", ct)
             if ct.startswith("image/"):
-                safe = (filename or "image").replace('"', "")
+                safe = header_ascii_filename(filename, "image")
                 encoded = quote(filename or "image", safe="")
                 handler.send_header("Content-Disposition", f'inline; filename="{safe}"; filename*=UTF-8\'\'{encoded}')
             else:
@@ -178,9 +178,18 @@ def proxy_remote_media(handler, media, local_id):
         handler.send_json(502, {"error": f"远程媒体下载失败: {error}", "code": "MEDIA_REMOTE_FAILED", "filename": media.get("filename")})
 
 
+def header_ascii_filename(filename, fallback="download"):
+    raw = str(filename or fallback)
+    safe = raw.replace('"', "")
+    safe = "".join(ch if 32 <= ord(ch) < 127 and ch not in "\\;" else "_" for ch in safe)
+    safe = safe.strip() or fallback
+    return safe
+
+
 def attachment_header(filename):
-    safe = (filename or "download").replace('"', "")
-    encoded = quote(filename or "download", safe="")
+    raw = filename or "download"
+    safe = header_ascii_filename(raw)
+    encoded = quote(raw, safe="")
     return f'attachment; filename="{safe}"; filename*=UTF-8\'\'{encoded}'
 
 
@@ -290,7 +299,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", ct)
                 if ct.startswith("image/"):
-                    safe = (filename or "image").replace('"', "")
+                    safe = header_ascii_filename(filename, "image")
                     encoded = quote(filename or "image", safe="")
                     self.send_header("Content-Disposition", f'inline; filename="{safe}"; filename*=UTF-8\'\'{encoded}')
                 else:

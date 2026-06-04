@@ -7,9 +7,12 @@ use axum::{
 };
 use serde::Deserialize;
 
+use crate::db::get_db;
 use crate::ia::types::ServerFile;
 use crate::sessions::manager::{ensure_logged_in_account, get_session};
 use crate::tools::server_files::{list_server_files, resolve_server_file};
+use crate::tools::wechat_keys::get_image_keys;
+use crate::tools::wechat_media::decode_image_dat_path;
 
 #[derive(Deserialize)]
 pub struct FileListParams {
@@ -66,19 +69,45 @@ pub async fn download_file(Path(id): Path<String>) -> Response {
             )
         }
     };
-    let data = match tokio::fs::read(&file.path).await {
+    let mut data = match tokio::fs::read(&file.path).await {
         Ok(data) => data,
-        Err(_) => return error_response(StatusCode::NOT_FOUND, "FILE_NOT_FOUND", "文件读取失败"),
+        Err(_) => return error_response(StatusCode::NOT_FOUND, "FILE_NOT_FOUND", "file read failed"),
     };
+    let mut content_type = file.content_type.clone();
+    let mut filename = file.filename.clone();
+    if file
+        .path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("dat"))
+        && data.starts_with(&[0x07, 0x08, 0x56, 0x32, 0x08, 0x07])
+    {
+        let image_keys = {
+            let db = get_db();
+            get_image_keys(&db, &session.id, &logged_in_user)
+        };
+        if let Some((decoded, format, decoded_name)) = decode_image_dat_path(&file.path, image_keys) {
+            data = decoded;
+            filename = decoded_name;
+            content_type = match format.as_str() {
+                "jpeg" => "image/jpeg",
+                "png" => "image/png",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                _ => "application/octet-stream",
+            }
+            .to_string();
+        }
+    }
     let mut response = Response::new(Body::from(data));
     *response.status_mut() = StatusCode::OK;
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&file.content_type)
+        HeaderValue::from_str(&content_type)
             .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
-    let encoded = percent_encode(&file.filename);
+    let encoded = percent_encode(&filename);
     headers.insert(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_str(&format!("attachment; filename*=UTF-8''{encoded}"))

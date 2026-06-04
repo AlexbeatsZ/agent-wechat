@@ -6,7 +6,8 @@ use crate::tools::wechat_messages::{
 use md5::{Digest, Md5};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// WeChat .dat file magic bytes: 07 08 56 32 08 07
@@ -572,6 +573,76 @@ fn find_dat_via_resource_db(
     None
 }
 
+
+fn find_cached_dat_by_local_id(
+    account_dir: &str,
+    chat_id: &str,
+    local_id: i64,
+    create_time: i64,
+    variant: MediaVariant,
+) -> Option<String> {
+    if variant == MediaVariant::Thumb {
+        return None;
+    }
+
+    let chat_hash = format!("{:x}", Md5::digest(chat_id.as_bytes()));
+    let year_month = chrono::DateTime::from_timestamp(create_time, 0)
+        .map(|dt| dt.format("%Y-%m").to_string());
+
+    let mut roots = Vec::new();
+    for base in &account_base_paths(account_dir) {
+        if let Some(ym) = &year_month {
+            roots.push(
+                Path::new(base)
+                    .join("cache")
+                    .join(ym)
+                    .join("Message")
+                    .join(&chat_hash),
+            );
+        }
+        let cache_root = Path::new(base).join("cache");
+        if let Ok(months) = fs::read_dir(&cache_root) {
+            for month in months.flatten() {
+                roots.push(month.path().join("Message").join(&chat_hash));
+            }
+        }
+    }
+
+    let prefix = format!("{local_id}_");
+    let mut candidates: Vec<(u8, String)> = Vec::new();
+    for root in roots {
+        for subdir in ["Bubble", "Image", "Img"] {
+            let dir = root.join(subdir);
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !name.starts_with(&prefix) || !name.ends_with(".dat") {
+                    continue;
+                }
+                let priority = if name.ends_with("_b.dat") {
+                    0
+                } else if !name.ends_with("_t.dat") {
+                    1
+                } else {
+                    2
+                };
+                if variant == MediaVariant::Original && priority == 2 {
+                    continue;
+                }
+                candidates.push((priority, path.to_string_lossy().to_string()));
+            }
+        }
+    }
+    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+    candidates.into_iter().map(|(_, path)| path).next()
+}
+
 /// Get video data: .mp4 if downloaded, otherwise cover .jpg or _thumb.jpg.
 /// Videos are stored unencrypted at msg/video/{YYYY-MM}/{hash}.mp4
 fn get_video_data(
@@ -801,6 +872,39 @@ fn decrypt_and_return(dat_path: &str, image_keys: &ImageKeys, local_id: i64) -> 
 
 // ── Emoji ────────────────────────────────────────────────────────────────────
 
+
+pub fn decode_image_dat_path(
+    dat_path: &Path,
+    image_keys_raw: Option<(String, Option<u8>)>,
+) -> Option<(Vec<u8>, String, String)> {
+    let (aes_hex, xor_byte) = image_keys_raw?;
+    let image_keys = ImageKeys {
+        aes_key_hex: aes_hex,
+        xor_byte,
+    };
+    let media = decrypt_and_return(&dat_path.to_string_lossy(), &image_keys, 0);
+    let data = media.data?;
+    if media.retryable == Some(true) || media.reason.is_some() {
+        return None;
+    }
+    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).ok()?;
+    let format = media.format.clone();
+    let ext = match format.as_str() {
+        "jpeg" => "jpg",
+        "png" => "png",
+        "gif" => "gif",
+        "webp" => "webp",
+        other if !other.is_empty() => other,
+        _ => "bin",
+    }
+    .to_string();
+    let stem = dat_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("wechat-image");
+    Some((raw, format, format!("{stem}.{ext}")))
+}
+
 fn get_emoji_media(
     account_dir: &str,
     keys: &HashMap<String, String>,
@@ -958,6 +1062,9 @@ fn get_file_attachment(
 ) -> MediaResult {
     let filename = extract_xml_tag(content, "title").unwrap_or_else(|| format!("file_{local_id}"));
     let ext = extract_xml_tag(content, "fileext").unwrap_or_default();
+    let total_len = extract_xml_tag(content, "totallen")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0);
     let cdn_url = extract_xml_tag(content, "cdnattachurl")
         .or_else(|| xml_attr(content, "cdnattachurl"))
         .filter(|u| u.starts_with("http"));
@@ -1023,6 +1130,37 @@ fn get_file_attachment(
                 }
             }
         }
+
+        if let Some(expected_size) = total_len {
+            let sized_roots = [
+                Path::new(base).join("msg/file").join(&year_month),
+                Path::new(base).join("cache").join(&year_month),
+                Path::new(base).join("msg/attach"),
+            ];
+            for root in sized_roots {
+                if let Some(found) = find_sized_file(&root, expected_size, &ext, 4) {
+                    if let Ok(data) = fs::read(&found) {
+                        tracing::info!(
+                            "[media:file] found attachment by size={} via fallback: {}",
+                            expected_size,
+                            found.display()
+                        );
+                        return MediaResult {
+                            media_type: "file".into(),
+                            data: Some(base64::Engine::encode(
+                                &base64::engine::general_purpose::STANDARD,
+                                &data,
+                            )),
+                            url: None,
+                            format: ext.clone(),
+                            filename: filename.clone(),
+                            reason: None,
+                            retryable: None,
+                        };
+                    }
+                }
+            }
+        }
     }
 
     if let Some(url) = cdn_url {
@@ -1058,6 +1196,63 @@ fn find_named_file(root: &Path, filename: &str, max_depth: usize) -> Option<std:
         }
     }
     None
+}
+
+fn find_sized_file(root: &Path, expected_size: u64, ext: &str, max_depth: usize) -> Option<PathBuf> {
+    if max_depth == 0 || !root.exists() {
+        return None;
+    }
+
+    let mut entries: Vec<_> = fs::read_dir(root).ok()?.flatten().collect();
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_file() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.len() == expected_size && file_matches_extension(&path, ext) {
+                return Some(path);
+            }
+        } else if path.is_dir() {
+            if let Some(found) = find_sized_file(&path, expected_size, ext, max_depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn file_matches_extension(path: &Path, ext: &str) -> bool {
+    let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+    if ext.is_empty() {
+        return true;
+    }
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case(&ext))
+    {
+        return true;
+    }
+
+    let mut header = [0u8; 8];
+    let read_len = fs::File::open(path)
+        .and_then(|mut file| file.read(&mut header))
+        .unwrap_or(0);
+    let header = &header[..read_len];
+
+    match ext.as_str() {
+        "docx" | "xlsx" | "pptx" | "zip" => header.starts_with(b"PK"),
+        "doc" | "xls" | "ppt" => header.starts_with(&[0xd0, 0xcf, 0x11, 0xe0]),
+        "pdf" => header.starts_with(b"%PDF"),
+        "png" => header.starts_with(&[0x89, b'P', b'N', b'G']),
+        "jpg" | "jpeg" => header.starts_with(&[0xff, 0xd8, 0xff]),
+        "gif" => header.starts_with(b"GIF"),
+        "webp" => header.len() >= 8 && &header[..4] == b"RIFF",
+        "txt" | "csv" | "json" | "xml" => true,
+        _ => path.extension().is_none(),
+    }
 }
 
 // ── Public entry point ───────────────────────────────────────────────────────
@@ -1143,6 +1338,13 @@ pub fn get_message_media(
                             return decrypt_and_return(&dat_path, &image_keys, local_id);
                         }
                     }
+                }
+
+                if let Some(dat_path) =
+                    find_cached_dat_by_local_id(account_dir, chat_id, local_id, create_time, variant)
+                {
+                    tracing::info!("[media] found cached dat for local_id={}: {}", local_id, dat_path);
+                    return decrypt_and_return(&dat_path, &image_keys, local_id);
                 }
 
                 tracing::warn!(
