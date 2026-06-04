@@ -3,7 +3,7 @@ import { downloadMessage, bindLazyMediaImages, loadMediaBlobUrl } from "./media.
 import { autosizeComposer, mountShellOnce, renderBottomButton, renderChats, renderComposer, renderError, renderLogin, renderMessages, renderModals, renderSidebar, renderStatus, updateActiveChat, } from "./render/index.js";
 import { captureMessageScroll, isNearBottom, restoreMessageScroll, scrollToBottom, messagesEl } from "./scroll.js";
 import { sendFile, sendText } from "./send.js";
-import { escapeHtml, labelForKind, selectedChat, state } from "./state.js";
+import { escapeHtml, labelForKind, selectedChat, state, storeSelectedChatId } from "./state.js";
 const root = document.querySelector("#root");
 if (!root)
     throw new Error("root missing");
@@ -69,6 +69,7 @@ async function refreshChats() {
     if (state.selectedChatId && !state.chats.some((chat) => chat.id === state.selectedChatId)) {
         state.selectedChatId = state.chats[0]?.id || "";
     }
+    storeSelectedChatId(state.selectedChatId);
     renderChats();
     renderConversationHeader();
     renderComposer();
@@ -139,6 +140,7 @@ function bindEvents() {
             const nextChatId = chatButton.dataset.chat || "";
             if (nextChatId && nextChatId !== state.selectedChatId) {
                 state.selectedChatId = nextChatId;
+                storeSelectedChatId(nextChatId);
                 state.messages = [];
                 state.newMessageCount = 0;
                 state.showBottomButton = false;
@@ -163,7 +165,7 @@ function bindEvents() {
             state.filesOpen = false;
             renderModals();
         }
-        if (action === "close-preview") {
+        if (action === "close-preview" && !target.closest(".image-preview-panel")) {
             state.previewImageUrl = "";
             renderModals();
         }
@@ -191,7 +193,7 @@ function bindEvents() {
             const localId = Number(preview.dataset.previewImage);
             const message = state.messages.find((m) => m.localId === localId);
             if (message?.mediaLocalId) {
-                void loadMediaBlobUrl(message.chatId, message.mediaLocalId, "preview").then((url) => {
+                void loadMediaBlobUrl(message.chatId, message.mediaLocalId, "original").then((url) => {
                     state.previewImageUrl = url;
                     renderModals();
                 }).catch((e) => { state.error = String(e.message || e); renderError(); });

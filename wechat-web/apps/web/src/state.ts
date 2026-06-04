@@ -1,6 +1,24 @@
 import type { ChatDto, ServerFileDto, StatusDto, MessageDto, ChatKind } from "./types.js";
 
 export const MAX_UPLOAD_BYTES = 35 * 1024 * 1024;
+const SELECTED_CHAT_STORAGE_KEY = "agent-wechat:selected-chat-id";
+
+function readStoredSelectedChatId(): string {
+  try {
+    return window.localStorage.getItem(SELECTED_CHAT_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function storeSelectedChatId(chatId: string): void {
+  try {
+    if (chatId) window.localStorage.setItem(SELECTED_CHAT_STORAGE_KEY, chatId);
+    else window.localStorage.removeItem(SELECTED_CHAT_STORAGE_KEY);
+  } catch {
+    // localStorage may be blocked in private or embedded contexts.
+  }
+}
 
 export const state: {
   status: StatusDto | null;
@@ -23,7 +41,7 @@ export const state: {
 } = {
   status: null,
   chats: [],
-  selectedChatId: "",
+  selectedChatId: readStoredSelectedChatId(),
   messages: [],
   error: "",
   sending: false,

@@ -16,7 +16,7 @@ import {
 } from "./render/index.js";
 import { captureMessageScroll, isNearBottom, restoreMessageScroll, scrollToBottom, messagesEl } from "./scroll.js";
 import { sendFile, sendText } from "./send.js";
-import { escapeHtml, labelForKind, selectedChat, state } from "./state.js";
+import { escapeHtml, labelForKind, selectedChat, state, storeSelectedChatId } from "./state.js";
 import type { ChatDto, MessageDto, RefreshReason, ServerFileDto, StatusDto } from "./types.js";
 
 const root = document.querySelector<HTMLDivElement>("#root");
@@ -88,6 +88,7 @@ async function refreshChats(): Promise<void> {
   if (state.selectedChatId && !state.chats.some((chat) => chat.id === state.selectedChatId)) {
     state.selectedChatId = state.chats[0]?.id || "";
   }
+  storeSelectedChatId(state.selectedChatId);
   renderChats();
   renderConversationHeader();
   renderComposer();
@@ -161,6 +162,7 @@ function bindEvents(): void {
       const nextChatId = chatButton.dataset.chat || "";
       if (nextChatId && nextChatId !== state.selectedChatId) {
         state.selectedChatId = nextChatId;
+        storeSelectedChatId(nextChatId);
         state.messages = [];
         state.newMessageCount = 0;
         state.showBottomButton = false;
@@ -179,7 +181,7 @@ function bindEvents(): void {
     if (action === "switch-login") void startWechatLogin(true);
     if (action === "server-files") void loadServerFiles().catch((e) => { state.error = String(e); renderError(); });
     if (action === "close-files") { state.filesOpen = false; renderModals(); }
-    if (action === "close-preview") { state.previewImageUrl = ""; renderModals(); }
+    if (action === "close-preview" && !target.closest(".image-preview-panel")) { state.previewImageUrl = ""; renderModals(); }
     if (action === "pick-image") document.querySelector<HTMLInputElement>("#image-input")?.click();
     if (action === "pick-file") document.querySelector<HTMLInputElement>("#file-input")?.click();
     if (action === "send") void sendText();
@@ -197,12 +199,12 @@ function bindEvents(): void {
       if (message) void downloadMessage(message, (download.dataset.variant || "original") as "thumb" | "preview" | "original").catch((e) => { state.error = String(e.message || e); renderError(); });
     }
 
-    const preview = target.closest<HTMLButtonElement>("[data-preview-image]");
+    const preview = target.closest<HTMLElement>("[data-preview-image]");
     if (preview) {
       const localId = Number(preview.dataset.previewImage);
       const message = state.messages.find((m) => m.localId === localId);
       if (message?.mediaLocalId) {
-        void loadMediaBlobUrl(message.chatId, message.mediaLocalId, "preview").then((url) => {
+        void loadMediaBlobUrl(message.chatId, message.mediaLocalId, "original").then((url) => {
           state.previewImageUrl = url;
           renderModals();
         }).catch((e) => { state.error = String(e.message || e); renderError(); });

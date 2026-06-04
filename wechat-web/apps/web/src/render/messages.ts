@@ -53,12 +53,8 @@ function renderTextMessage(message: MessageDto): string {
 
 function renderImageMessage(message: MessageDto): string {
   return `
-    <div class="image-bubble">
-      <img class="chat-image" data-chat-id="${escapeHtml(message.chatId)}" data-media-local-id="${escapeHtml(message.mediaLocalId || "")}" data-variant="thumb" alt="图片消息" loading="lazy">
-      <div class="image-actions">
-        <button type="button" data-preview-image="${message.localId}">查看</button>
-        <button type="button" data-download="${message.localId}" data-variant="original">原图</button>
-      </div>
+    <div class="image-bubble" data-preview-image="${message.localId}">
+      <img class="chat-image" data-chat-id="${escapeHtml(message.chatId)}" data-media-local-id="${escapeHtml(message.mediaLocalId || "")}" data-variant="original" alt="图片消息" loading="lazy">
     </div>
   `;
 }

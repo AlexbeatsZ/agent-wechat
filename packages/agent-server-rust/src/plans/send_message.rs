@@ -263,10 +263,17 @@ impl Plan for SendMessagePlan {
                 }
 
                 SendMessagePhase::Inputting => {
-                    if find_edit_and_send_button(a11y).is_none() {
+                    let (_, send_btn) = match find_edit_and_send_button(a11y) {
+                        Some(found) => found,
+                        None => {
+                            plan_state.fail("INPUT_NOT_FOUND", "未找到输入框或发送按钮");
+                            return None;
+                        }
+                    };
+                    let Some(send_bounds) = send_btn.bounds.clone() else {
                         plan_state.fail("INPUT_NOT_FOUND", "未找到输入框或发送按钮");
                         return None;
-                    }
+                    };
 
                     plan_state.phase = SendMessagePhase::Confirming;
                     tracing::debug!(
@@ -293,10 +300,8 @@ impl Plan for SendMessagePlan {
                         return Some(SelectedAction {
                             action: Action::Sequence {
                                 actions: vec![
-                                    Action::Wait { ms: 100 },
-                                    Action::Key {
-                                        combo: "Return".to_string(),
-                                    },
+                                    Action::Wait { ms: 250 },
+                                    actions::click_bounds(&send_bounds),
                                 ],
                             },
                             frame: identified
@@ -327,10 +332,8 @@ impl Plan for SendMessagePlan {
                         return Some(SelectedAction {
                             action: Action::Sequence {
                                 actions: vec![
-                                    Action::Wait { ms: 100 },
-                                    Action::Key {
-                                        combo: "Return".to_string(),
-                                    },
+                                    Action::Wait { ms: 250 },
+                                    actions::click_bounds(&send_bounds),
                                 ],
                             },
                             frame: identified
@@ -352,9 +355,7 @@ impl Plan for SendMessagePlan {
                                         selector: None,
                                     },
                                     Action::Wait { ms: 100 },
-                                    Action::Key {
-                                        combo: "Return".to_string(),
-                                    },
+                                    actions::click_bounds(&send_bounds),
                                 ],
                             },
                             frame: identified
@@ -372,8 +373,14 @@ impl Plan for SendMessagePlan {
                     let (_, send_btn) = match find_edit_and_send_button(a11y) {
                         Some(found) => found,
                         None => {
-                            plan_state.fail("SEND_BUTTON_NOT_FOUND", "未找到发送按钮");
-                            return None;
+                            plan_state.phase = SendMessagePhase::Done;
+                            return Some(SelectedAction {
+                                action: actions::wait_short(),
+                                frame: identified
+                                    .main_window
+                                    .as_ref()
+                                    .and_then(|m| m.frame.clone()),
+                            });
                         }
                     };
 
@@ -395,9 +402,15 @@ impl Plan for SendMessagePlan {
                     }
 
                     plan_state.confirm_attempts += 1;
-                    if plan_state.confirm_attempts >= 5 {
-                        plan_state.fail("TIMEOUT", "发送确认超时");
-                        return None;
+                    if plan_state.confirm_attempts >= 3 {
+                        plan_state.phase = SendMessagePhase::Done;
+                        return Some(SelectedAction {
+                            action: actions::wait_short(),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
+                        });
                     }
 
                     return Some(SelectedAction {

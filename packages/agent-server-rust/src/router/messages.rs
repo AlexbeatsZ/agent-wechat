@@ -443,8 +443,8 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
                 &keys_for_confirm,
                 &chat_id_for_confirm,
                 baseline_id,
-                10,  // attempts
-                300, // interval_ms
+                20,  // attempts
+                500, // interval_ms
             )
             .await;
 
@@ -457,9 +457,8 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
                     confirmed_id
                 );
             } else {
-                // UI-based confirmation was the fallback during plan execution
                 confirmed = Some(false);
-                confirmation_method = Some("ui_disabled".to_string());
+                confirmation_method = Some("db_poll_failed".to_string());
                 tracing::warn!(
                     "[send-confirm] DB poll could not confirm new self message for chat={} (baseline={})",
                     chat_id_for_confirm, baseline_id
@@ -474,17 +473,29 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         }
     }
 
-    Json(SendResult {
-        success: result.success,
-        code: result
+    let success = result.success && confirmed != Some(false);
+    let code = if !success && confirmed == Some(false) {
+        Some("TIMEOUT".to_string())
+    } else {
+        result
             .error
             .as_ref()
-            .and_then(|e| e.split_once(':').map(|(code, _)| code.trim().to_string())),
-        error: result.error.map(|e| {
+            .and_then(|e| e.split_once(':').map(|(code, _)| code.trim().to_string()))
+    };
+    let error = if !success && confirmed == Some(false) {
+        Some("发送后未能在微信数据库中确认新消息".to_string())
+    } else {
+        result.error.map(|e| {
             e.split_once(':')
                 .map(|(_, message)| message.trim().to_string())
                 .unwrap_or(e)
-        }),
+        })
+    };
+
+    Json(SendResult {
+        success,
+        code,
+        error,
         confirmed,
         local_id,
         confirmation_method,

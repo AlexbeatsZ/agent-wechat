@@ -544,7 +544,7 @@ pub struct SendResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
     pub local_id: Option<i64>,
-    /// How the send was confirmed: "db_poll" or "ui_disabled" or "none".
+    /// How the send was confirmed: "db_poll", "db_poll_failed", or "ui_disabled".
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub confirmation_method: Option<String>,
