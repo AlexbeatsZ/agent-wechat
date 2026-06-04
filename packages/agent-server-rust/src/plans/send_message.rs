@@ -9,6 +9,35 @@ use crate::tools::tool_capabilities::{
     paste_file_supports_send, paste_image_supports_send, tool_exists,
 };
 
+async fn try_lowlevel_text_send(
+    chat_id: &str,
+    message: &str,
+    exec_options: &ExecOptions,
+) -> bool {
+    if !tool_exists("send-text-lowlevel", exec_options).await {
+        return false;
+    }
+
+    let result = exec_command("send-text-lowlevel", &[chat_id, message], exec_options).await;
+    if result.exit_code == 0 {
+        return true;
+    }
+
+    if result.exit_code == 77 {
+        tracing::info!(
+            "[send_message] low-level text sender unavailable: {}",
+            result.stderr.trim()
+        );
+    } else {
+        tracing::warn!(
+            "[send_message] low-level text sender failed with code {}: {}",
+            result.exit_code,
+            result.stderr.trim()
+        );
+    }
+    false
+}
+
 pub struct SendMessagePlan;
 
 pub struct SendMessageParams {
@@ -297,6 +326,21 @@ impl Plan for SendMessagePlan {
                         }
                     }
 
+                    if params.image_path.is_none() && params.file_path.is_none() {
+                        if let Some(msg) = &params.message {
+                            if try_lowlevel_text_send(&params.chat_id, msg, exec_options).await {
+                                plan_state.phase = SendMessagePhase::Done;
+                                return Some(SelectedAction {
+                                    action: actions::wait_short(),
+                                    frame: identified
+                                        .main_window
+                                        .as_ref()
+                                        .and_then(|m| m.frame.clone()),
+                                });
+                            }
+                        }
+                    }
+
                     let (edit_node, _) = match find_edit_and_send_button(a11y) {
                         Some(found) => found,
                         None => {
@@ -414,19 +458,7 @@ impl Plan for SendMessagePlan {
 
                     if let Some(msg) = &params.message {
                         return Some(SelectedAction {
-                            action: Action::Sequence {
-                                actions: vec![
-                                    Action::Key {
-                                        combo: "ctrl+a".to_string(),
-                                    },
-                                    Action::Type {
-                                        text: msg.clone(),
-                                        selector: None,
-                                    },
-                                    Action::Wait { ms: 100 },
-                                    actions::click_bounds(&send_bounds),
-                                ],
-                            },
+                            action: Action::SendText { text: msg.clone() },
                             frame: identified
                                 .main_window
                                 .as_ref()

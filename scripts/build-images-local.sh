@@ -35,6 +35,9 @@ done
 
 prepare_build_context() {
   echo "==> Preparing build context"
+  echo "==> Building bundled Web UI"
+  pnpm --filter @wechat-web/web build
+
   echo "==> Copying agent-server-rust to docker context"
   rm -rf "$DOCKER_DIR/agent-server-rust"
   mkdir -p "$DOCKER_DIR/agent-server-rust"
@@ -44,11 +47,18 @@ prepare_build_context() {
   fi
   cp -r "$ROOT_DIR/packages/agent-server-rust/src" "$DOCKER_DIR/agent-server-rust/"
   cp -r "$ROOT_DIR/packages/agent-server-rust/migrations" "$DOCKER_DIR/agent-server-rust/"
+
+  echo "==> Copying bundled Web UI to docker context"
+  rm -rf "$DOCKER_DIR/wechat-web"
+  mkdir -p "$DOCKER_DIR/wechat-web"
+  cp "$ROOT_DIR/wechat-web/deploy_server.py" "$DOCKER_DIR/wechat-web/"
+  cp -r "$ROOT_DIR/wechat-web/apps/web/dist" "$DOCKER_DIR/wechat-web/dist"
 }
 
 cleanup_build_context() {
   echo "==> Cleaning up build context"
   rm -rf "$DOCKER_DIR/agent-server-rust"
+  rm -rf "$DOCKER_DIR/wechat-web"
 }
 
 build_arch() {

@@ -56,6 +56,8 @@ pub enum Action {
         #[serde(skip_serializing_if = "Option::is_none")]
         selector: Option<String>,
     },
+    #[serde(rename = "send_text")]
+    SendText { text: String },
     #[serde(rename = "key")]
     Key { combo: String },
     #[serde(rename = "scroll")]
@@ -230,6 +232,7 @@ pub struct FrameHint {
     pub name: Option<String>,
     pub bounds: Bounds,
     pub pid: Option<i64>,
+    pub window_id: Option<i64>,
 }
 
 pub struct IdentifyResult {

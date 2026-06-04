@@ -579,7 +579,7 @@ var hook = Interceptor.attach(addr, {{
 def wait_for_current_selection(pid, profile, target, attempts=8, interval=0.35):
     """Re-enumerate until WeChat reports the target as current selection."""
     for attempt in range(attempts):
-        sessions, _vector_base, _vector_count, current_sel = enumerate_sessions(pid, profile, attempts=1)
+        sessions, _vector_base, _vector_count, current_sel = enumerate_sessions(pid, profile)
         if current_sel == target:
             log(f"[chat-select] Verified current selection: {current_sel}")
             return True

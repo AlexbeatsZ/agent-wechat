@@ -7,15 +7,19 @@ use std::pin::Pin;
 /// Build --window activation args from a FrameHint.
 fn window_activate_args(hint: &FrameHint) -> Vec<String> {
     if let Some(pid) = hint.pid {
-        vec![
+        let mut args = vec![
             "--window".to_string(),
             pid.to_string(),
             (hint.bounds.x as i32).to_string(),
             (hint.bounds.y as i32).to_string(),
             (hint.bounds.width as i32).to_string(),
             (hint.bounds.height as i32).to_string(),
-            "--".to_string(),
-        ]
+        ];
+        if let Some(window_id) = hint.window_id {
+            args.push(window_id.to_string());
+        }
+        args.push("--".to_string());
+        args
     } else {
         vec![]
     }
@@ -68,7 +72,17 @@ pub fn execute_action<'a>(
             }
 
             Action::Type { text, selector: _ } => {
-                exec_command("input", &[text.as_str()], options).await;
+                let mut args = activate_args.clone();
+                args.push(text.clone());
+                let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                exec_command("input", &args_ref, options).await;
+            }
+
+            Action::SendText { text } => {
+                let mut args = activate_args.clone();
+                args.push(text.clone());
+                let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+                exec_command("send-text", &args_ref, options).await;
             }
 
             Action::Key { combo } => {

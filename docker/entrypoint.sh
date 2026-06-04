@@ -182,6 +182,33 @@ if [ ! -f "$DB_PATH" ]; then
   chown wechat:wechat "$(dirname "$DB_PATH")"
 fi
 
+
+# ============================================
+# Share token with bundled Web proxy
+# ============================================
+if [ -n "${AGENT_WECHAT_TOKEN:-}" ]; then
+  WEB_TOKEN_FILE="${AGENT_WECHAT_TOKEN_FILE:-/data/auth-token}"
+  if [ -d "$WEB_TOKEN_FILE" ]; then
+    rm -rf "$WEB_TOKEN_FILE"
+  fi
+  mkdir -p "$(dirname "$WEB_TOKEN_FILE")"
+  printf "%s" "$AGENT_WECHAT_TOKEN" > "$WEB_TOKEN_FILE"
+  chmod 600 "$WEB_TOKEN_FILE" || true
+fi
+
+# ============================================
+# Start bundled Web UI/API proxy (single-container deployment)
+# ============================================
+if [ "${ENABLE_WEB:-1}" = "1" ] && [ -f /opt/wechat-web/deploy_server.py ]; then
+  export HOST="${WEB_HOST:-0.0.0.0}"
+  export PORT="${WEB_PORT:-3001}"
+  export WEB_ROOT="${WEB_ROOT:-/opt/wechat-web/dist}"
+  export AGENT_WECHAT_BASE_URL="${AGENT_WECHAT_BASE_URL:-http://127.0.0.1:${AGENT_PORT:-6174}}"
+  export AGENT_WECHAT_TOKEN_FILE="${AGENT_WECHAT_TOKEN_FILE:-/data/auth-token}"
+  python3 /opt/wechat-web/deploy_server.py &
+  echo "Web UI/API proxy: http://localhost:${PORT}"
+fi
+
 # ============================================
 # Start agent-server (Rust binary, foreground)
 # ============================================

@@ -1,60 +1,65 @@
 #!/bin/bash
-# Activate (bring to foreground) a window by PID and bounds matching
-# Usage: window-activate <pid> <x> <y> <width> <height>
-#
-# Finds all windows for the given PID, matches by geometry, and activates.
-# Returns the window ID on success.
+# Activate a window by optional X window id, then PID and bounds matching.
+# Usage: window-activate <pid> <x> <y> <width> <height> [window-id]
 
 set -euo pipefail
 
 if [ "$#" -lt 5 ]; then
-  echo "Usage: window-activate <pid> <x> <y> <width> <height>" >&2
+  echo "Usage: window-activate <pid> <x> <y> <width> <height> [window-id]" >&2
   exit 1
 fi
 
-PID="$1"
-TARGET_X="$2"
-TARGET_Y="$3"
-TARGET_W="$4"
-TARGET_H="$5"
+PID="$1"; TARGET_X="$2"; TARGET_Y="$3"; TARGET_W="$4"; TARGET_H="$5"; TARGET_ID="${6:-}"
 
-# Find all windows for this PID
+activate_id() {
+  local wid="$1"
+  [ -n "$wid" ] || return 1
+  if xdotool getwindowgeometry "$wid" >/dev/null 2>&1; then
+    xdotool windowactivate --sync "$wid" 2>/dev/null
+    echo "$wid"
+    return 0
+  fi
+  return 1
+}
+
+if activate_id "$TARGET_ID"; then
+  exit 0
+fi
+
 WINDOWS=$(xdotool search --pid "$PID" 2>/dev/null || true)
-
 if [ -z "$WINDOWS" ]; then
   echo "No windows found for PID $PID" >&2
   exit 1
 fi
 
-# Find window matching the target bounds
+best_wid=""; best_score=999999
 for WID in $WINDOWS; do
-  # Get window geometry
   GEOM=$(xdotool getwindowgeometry "$WID" 2>/dev/null || continue)
-
-  # Parse position and size from output like:
-  #   Window 12345678
-  #   Position: 499,198 (screen: 0)
-  #   Geometry: 280x380
-  POS=$(echo "$GEOM" | grep "Position:" | sed 's/.*Position: \([0-9]*\),\([0-9]*\).*/\1 \2/')
-  SIZE=$(echo "$GEOM" | grep "Geometry:" | sed 's/.*Geometry: \([0-9]*\)x\([0-9]*\)/\1 \2/')
-
-  WIN_X=$(echo "$POS" | cut -d' ' -f1)
-  WIN_Y=$(echo "$POS" | cut -d' ' -f2)
-  WIN_W=$(echo "$SIZE" | cut -d' ' -f1)
-  WIN_H=$(echo "$SIZE" | cut -d' ' -f2)
-
-  # Check if bounds match (allow small tolerance for window decorations)
-  TOLERANCE=5
-  if [ "$((WIN_X - TARGET_X))" -ge "-$TOLERANCE" ] && [ "$((WIN_X - TARGET_X))" -le "$TOLERANCE" ] && \
-     [ "$((WIN_Y - TARGET_Y))" -ge "-$TOLERANCE" ] && [ "$((WIN_Y - TARGET_Y))" -le "$TOLERANCE" ] && \
-     [ "$((WIN_W - TARGET_W))" -ge "-$TOLERANCE" ] && [ "$((WIN_W - TARGET_W))" -le "$TOLERANCE" ] && \
-     [ "$((WIN_H - TARGET_H))" -ge "-$TOLERANCE" ] && [ "$((WIN_H - TARGET_H))" -le "$TOLERANCE" ]; then
-    # Found matching window - activate it
+  POS=$(echo "$GEOM" | awk '/Position:/ {gsub(/,/," ",$2); print $2}')
+  SIZE=$(echo "$GEOM" | awk '/Geometry:/ {gsub(/x/," ",$2); print $2}')
+  WIN_X=$(echo "$POS" | cut -d' ' -f1); WIN_Y=$(echo "$POS" | cut -d' ' -f2)
+  WIN_W=$(echo "$SIZE" | cut -d' ' -f1); WIN_H=$(echo "$SIZE" | cut -d' ' -f2)
+  [ -n "$WIN_X" ] && [ -n "$WIN_Y" ] && [ -n "$WIN_W" ] && [ -n "$WIN_H" ] || continue
+  DX=$((WIN_X - TARGET_X)); DY=$((WIN_Y - TARGET_Y)); DW=$((WIN_W - TARGET_W)); DH=$((WIN_H - TARGET_H))
+  ADX=${DX#-}; ADY=${DY#-}; ADW=${DW#-}; ADH=${DH#-}
+  score=$((ADX + ADY + ADW + ADH))
+  if [ "$score" -lt "$best_score" ]; then
+    best_score="$score"; best_wid="$WID"
+  fi
+  if [ "$score" -le 40 ]; then
     xdotool windowactivate --sync "$WID" 2>/dev/null
     echo "$WID"
     exit 0
   fi
 done
 
+if [ -n "$best_wid" ]; then
+  echo "No close bounds match for PID $PID; activating nearest window $best_wid score=$best_score" >&2
+  xdotool windowactivate --sync "$best_wid" 2>/dev/null
+  echo "$best_wid"
+  exit 0
+fi
+
 echo "No window found matching bounds ($TARGET_X,$TARGET_Y ${TARGET_W}x${TARGET_H}) for PID $PID" >&2
+for WID in $WINDOWS; do xdotool getwindowgeometry "$WID" >&2 || true; done
 exit 1

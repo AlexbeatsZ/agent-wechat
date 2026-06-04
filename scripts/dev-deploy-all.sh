@@ -8,7 +8,12 @@ RELEASE="false"
 BACKEND_CONTAINER=""
 WEB_CONTAINER=""
 WEB_PORT="3001"
-AGENT_URL="http://host.docker.internal:6174"
+AGENT_URL="http://127.0.0.1:6174"
+LEGACY_WEB_CONTAINER="false"
+
+usage() {
+  echo "Usage: $0 [--sync-tools] [--release] [--backend-container name] [--web-port 3001] [--agent-url url] [--legacy-web-container --web-container name]" >&2
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -36,9 +41,13 @@ while [ "$#" -gt 0 ]; do
       AGENT_URL="${2:-}"
       shift 2
       ;;
+    --legacy-web-container)
+      LEGACY_WEB_CONTAINER="true"
+      shift
+      ;;
     *)
       echo "unknown argument: $1" >&2
-      echo "Usage: $0 [--sync-tools] [--release] [--backend-container name] [--web-container name] [--web-port 3001] [--agent-url url]" >&2
+      usage
       exit 1
       ;;
   esac
@@ -53,18 +62,33 @@ if [ "$SYNC_TOOLS" = "true" ]; then
 fi
 if [ -n "$BACKEND_CONTAINER" ]; then
   BACKEND_ARGS+=(--container "$BACKEND_CONTAINER")
+else
+  BACKEND_CONTAINER="agent-wechat"
 fi
 
 echo "==> Deploying backend"
 "$ROOT_DIR/scripts/dev-deploy.sh" "${BACKEND_ARGS[@]}"
 
-WEB_ARGS=(--port "$WEB_PORT" --agent-url "$AGENT_URL")
-if [ -n "$WEB_CONTAINER" ]; then
-  WEB_ARGS+=(--container "$WEB_CONTAINER")
-fi
+echo "==> Building web"
+pnpm --filter @wechat-web/web build
 
-echo "==> Deploying web"
-"$ROOT_DIR/scripts/dev-deploy-web.sh" "${WEB_ARGS[@]}"
+if [ "$LEGACY_WEB_CONTAINER" = "true" ]; then
+  WEB_ARGS=(--port "$WEB_PORT" --agent-url "$AGENT_URL")
+  if [ -n "$WEB_CONTAINER" ]; then
+    WEB_ARGS+=(--container "$WEB_CONTAINER")
+  fi
+
+  echo "==> Deploying legacy standalone web container"
+  "$ROOT_DIR/scripts/dev-deploy-web.sh" "${WEB_ARGS[@]}"
+else
+  echo "==> Deploying bundled web into $BACKEND_CONTAINER"
+  docker exec "$BACKEND_CONTAINER" sh -lc 'mkdir -p /opt/wechat-web/dist'
+  docker cp "$ROOT_DIR/wechat-web/deploy_server.py" "$BACKEND_CONTAINER:/opt/wechat-web/deploy_server.py"
+  docker cp "$ROOT_DIR/wechat-web/apps/web/dist/." "$BACKEND_CONTAINER:/opt/wechat-web/dist/"
+
+  echo "==> Restarting bundled web server"
+  docker exec "$BACKEND_CONTAINER" sh -lc "pkill -f '/opt/wechat-web/deploy_server.py' 2>/dev/null || true; HOST=0.0.0.0 PORT=$WEB_PORT WEB_ROOT=/opt/wechat-web/dist AGENT_WECHAT_BASE_URL=$AGENT_URL AGENT_WECHAT_TOKEN_FILE=/data/auth-token nohup python3 /opt/wechat-web/deploy_server.py >/tmp/wechat-web.log 2>&1 &"
+fi
 
 echo "==> Final health checks"
 curl -fsS http://localhost:6174/health >/dev/null && echo "Backend OK: http://localhost:6174"

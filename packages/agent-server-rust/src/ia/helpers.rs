@@ -47,6 +47,7 @@ pub fn frame_hint_from_node(node: &A11yNode) -> Option<FrameHint> {
         },
         bounds,
         pid: node.window.as_ref().map(|w| w.pid),
+        window_id: node.window.as_ref().and_then(|w| w.id),
     })
 }
 

@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Experimental low-level text sender probe.
+
+The repository has verified Frida offsets for session enumeration and selection,
+but no verified WeChat Linux text-send ABI. This tool returns exit code 77 so
+callers can fall back to the UI path without attempting an unproven in-process
+send. It is the integration point for a future BuildID-specific sender.
+"""
+import json
+import os
+import subprocess
+import sys
+
+if len(sys.argv) < 3:
+    print("Usage: send-text-lowlevel <chat-id> <text>", file=sys.stderr)
+    sys.exit(2)
+
+chat_id = sys.argv[1]
+try:
+    proc = subprocess.run(
+        ["/opt/tools/chat-select", "--list"],
+        text=True,
+        capture_output=True,
+        timeout=45,
+        env={**os.environ, "HOME": "/home/wechat"},
+    )
+except Exception as exc:
+    print(f"low-level probe failed before send: {exc}", file=sys.stderr)
+    sys.exit(77)
+
+if proc.returncode != 0:
+    print(proc.stderr.strip() or "chat-select probe failed", file=sys.stderr)
+    sys.exit(77)
+
+try:
+    payload = json.loads(proc.stdout or "{}")
+except Exception:
+    payload = {}
+
+if chat_id not in payload.get("sessions", {}):
+    print(f"target chat is not in the live session vector: {chat_id}", file=sys.stderr)
+    sys.exit(77)
+
+print("low-level text send is not enabled for this WeChat BuildID; falling back to UI sender", file=sys.stderr)
+sys.exit(77)

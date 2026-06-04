@@ -160,6 +160,10 @@ ENV AGENT_PORT=6174
 COPY entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
-EXPOSE 6174 1234
+# Bundled Web UI and API proxy
+COPY wechat-web/deploy_server.py /opt/wechat-web/deploy_server.py
+COPY wechat-web/dist /opt/wechat-web/dist
+
+EXPOSE 6174 6080 3001 1234
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -1,4 +1,4 @@
-# Sample docker-compose for standalone agent-wechat deployment.
+# Sample docker-compose for standalone single-container agent-wechat deployment.
 # Generate a token before starting:
 #   mkdir -p ~/.config/agent-wechat
 #   openssl rand -hex 32 > ~/.config/agent-wechat/token
@@ -6,7 +6,7 @@
 
 services:
   agent-wechat:
-    image: ghcr.io/thisnick/agent-wechat:latest
+    image: agent-wechat:amd64
     container_name: agent-wechat
     security_opt:
       - seccomp=unconfined
@@ -15,12 +15,18 @@ services:
       - NET_ADMIN
     ports:
       - "6174:6174"
+      - "6080:6080"
+      - "3001:3001"
     volumes:
       - agent-wechat-data:/data
       - agent-wechat-home:/home/wechat
       - ~/.config/agent-wechat/token:/data/auth-token:ro
     environment:
       - PROXY=${PROXY:-}
+      - ENABLE_WEB=1
+      - WEB_PORT=3001
+      - AGENT_WECHAT_BASE_URL=http://127.0.0.1:6174
+      - AGENT_WECHAT_TOKEN_FILE=/data/auth-token
     restart: unless-stopped
 
 volumes:
