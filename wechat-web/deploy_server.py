@@ -215,6 +215,17 @@ def map_agent_send_error(raw):
     return code or "SEND_FAILED", labels.get(code) or error
 
 
+def wechat_status_payload():
+    raw = agent_request("/api/status/auth")
+    status = raw.get("status") or "unknown"
+    return {
+        "agentReachable": True,
+        "loggedIn": status == "logged_in",
+        "status": status,
+        "loggedInUser": raw.get("loggedInUser"),
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_json(self, status, payload):
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -243,13 +254,15 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         try:
             if path == "/api/health":
-                self.send_json(200, {"ok": True})
+                try:
+                    status_payload = wechat_status_payload()
+                    self.send_json(200, {"ok": True, **status_payload})
+                except Exception:
+                    self.send_json(200, {"ok": True, "agentReachable": False, "loggedIn": False, "status": "agent_unavailable"})
             elif path == "/api/session":
                 self.send_json(200, {"passwordEnabled": False, "authenticated": True})
-            elif path == "/api/status":
-                raw = agent_request("/api/status/auth")
-                status = raw.get("status") or "unknown"
-                self.send_json(200, {"agentReachable": True, "loggedIn": status == "logged_in", "status": status, "loggedInUser": raw.get("loggedInUser")})
+            elif path in {"/api/status", "/api/wechat-status"}:
+                self.send_json(200, wechat_status_payload())
             elif path == "/api/wechat-login/events":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream; charset=utf-8")
