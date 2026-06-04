@@ -74,10 +74,10 @@ function renderServiceFolder(items) {
     <button class="chat-item service-folder" data-action="open-service-folder" type="button">
       <span class="chat-avatar service-avatar">服</span>
       <span class="chat-main">
-        <span class="chat-top"><strong>公众号与服务</strong><time>${formatChatTime(latest?.lastMessageTime)}</time></span>
+        <span class="chat-top"><strong>公众号与服务</strong></span>
         <span class="chat-preview">${escapeHtml(latest?.displayName || "")}${latest?.lastMessagePreview ? `: ${escapeHtml(latest.lastMessagePreview)}` : ""}</span>
       </span>
-      ${unread ? `<em>${unread > 99 ? "99+" : unread}</em>` : ""}
+      <span class="chat-meta">${latest?.lastMessageTime ? `<time>${formatChatTime(latest.lastMessageTime)}</time>` : ""}${unread ? `<em>${unread > 99 ? "99+" : unread}</em>` : ""}</span>
     </button>
   `;
 }
@@ -86,11 +86,10 @@ function renderChatItem(item) {
     <button class="chat-item ${item.id === state.selectedChatId ? "active" : ""}" data-chat="${escapeHtml(item.id)}" type="button">
       <span class="chat-avatar">${avatarText(item)}</span>
       <span class="chat-main">
-        <span class="chat-top"><strong>${escapeHtml(item.displayName)}</strong><time>${formatChatTime(item.lastMessageTime)}</time></span>
+        <span class="chat-top"><strong>${escapeHtml(item.displayName)}</strong></span>
         <span class="chat-preview">${escapeHtml(item.lastMessagePreview || labelForKind(item.kind))}</span>
       </span>
-      ${item.unreadCount ? `<em>${item.unreadCount > 99 ? "99+" : item.unreadCount}</em>` : ""}
-      ${item.canSend || item.unreadCount ? "" : `<small class="readonly-chip">只读</small>`}
+      <span class="chat-meta">${item.lastMessageTime ? `<time>${formatChatTime(item.lastMessageTime)}</time>` : ""}${item.unreadCount ? `<em>${item.unreadCount > 99 ? "99+" : item.unreadCount}</em>` : ""}${item.canSend || item.unreadCount ? "" : `<small class="readonly-chip">只读</small>`}</span>
     </button>
   `;
 }
@@ -107,5 +106,13 @@ function formatChatTime(value) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime()))
         return "";
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+    const now = new Date();
+    const sameDay = date.getFullYear() === now.getFullYear()
+        && date.getMonth() === now.getMonth()
+        && date.getDate() === now.getDate();
+    if (sameDay)
+        return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+    if (date.getFullYear() === now.getFullYear())
+        return `${date.getMonth() + 1}月${date.getDate()}日`;
+    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
 }

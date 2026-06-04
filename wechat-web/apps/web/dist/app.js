@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { downloadMessage, bindLazyMediaImages, loadMediaBlobUrl } from "./media.js";
+import { downloadMessage, bindLazyMediaImages, loadFirstAvailableMediaBlobUrl } from "./media.js";
 import { autosizeComposer, mountShellOnce, renderBottomButton, renderChats, renderComposer, renderError, renderLogin, renderMessages, renderModals, renderSidebar, renderStatus, updateActiveChat, } from "./render/index.js";
 import { captureMessageScroll, isNearBottom, restoreMessageScroll, scrollToBottom, messagesEl } from "./scroll.js";
 import { sendFile, sendText } from "./send.js";
@@ -177,6 +177,7 @@ function bindEvents() {
         }
         if (action === "close-preview" && !target.closest(".image-preview-panel")) {
             state.previewImageUrl = "";
+            state.previewImageStatus = "";
             renderModals();
         }
         if (action === "pick-image")
@@ -203,8 +204,11 @@ function bindEvents() {
             const localId = Number(preview.dataset.previewImage);
             const message = state.messages.find((m) => m.localId === localId);
             if (message?.mediaLocalId) {
-                void loadMediaBlobUrl(message.chatId, message.mediaLocalId, "original").then((url) => {
+                state.previewImageUrl = "";
+                state.previewImageStatus = "";
+                void loadFirstAvailableMediaBlobUrl(message.chatId, message.mediaLocalId, ["original", "preview", "thumb"]).then(({ url, variant }) => {
                     state.previewImageUrl = url;
+                    state.previewImageStatus = variant === "original" ? "" : "当前显示预览，原图未下载";
                     renderModals();
                 }).catch((e) => { state.error = String(e.message || e); renderError(); });
             }

@@ -18,6 +18,7 @@ pub fn classify_chat(username: &str) -> String {
             | "mphelper"
             | "exmail_tool"
             | "brandsessionholder"
+            | "notifymessage"
             | "fmessage"
             | "medianote"
     ) {
@@ -43,6 +44,7 @@ mod tests {
             ("ww_service_notice", "service"),
             ("notice@qy_u", "service"),
             ("weixin", "system"),
+            ("notifymessage", "system"),
             ("user@openim", "openim"),
         ];
 

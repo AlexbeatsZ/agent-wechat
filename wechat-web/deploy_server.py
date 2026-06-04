@@ -53,7 +53,7 @@ def classify_chat(chat_id):
         return "service", False
     if chat_id.endswith("@openim") or "@openim" in chat_id:
         return "openim", True
-    if chat_id in {"weixin", "qqmail", "mphelper", "exmail_tool", "brandsessionholder", "fmessage", "medianote"}:
+    if chat_id in {"weixin", "qqmail", "mphelper", "exmail_tool", "brandsessionholder", "notifymessage", "fmessage", "medianote"}:
         return "system", False
     return "individual", True
 
@@ -151,6 +151,33 @@ def content_type(media):
     return mimetypes.guess_type(media.get("filename") or "")[0] or "application/octet-stream"
 
 
+def proxy_remote_media(handler, media, local_id):
+    url = str(media.get("url") or "")
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        handler.send_json(404, {"error": "media is not available", "code": "MEDIA_NOT_AVAILABLE", "filename": media.get("filename")})
+        return
+    try:
+        request = Request(url, headers={"User-Agent": "Mozilla/5.0 Agent-WeChat-Web/1.0"})
+        with urlopen(request, timeout=60) as response:
+            raw = response.read()
+            filename = media.get("filename") or f"media_{local_id}"
+            ct = response.headers.get("Content-Type") or content_type(media)
+            handler.send_response(200)
+            handler.send_header("Content-Type", ct)
+            if ct.startswith("image/"):
+                safe = (filename or "image").replace('"', "")
+                encoded = quote(filename or "image", safe="")
+                handler.send_header("Content-Disposition", f'inline; filename="{safe}"; filename*=UTF-8\'\'{encoded}')
+            else:
+                handler.send_header("Content-Disposition", attachment_header(filename))
+            handler.send_header("Content-Length", str(len(raw)))
+            handler.end_headers()
+            handler.wfile.write(raw)
+    except Exception as error:
+        handler.send_json(502, {"error": f"远程媒体下载失败: {error}", "code": "MEDIA_REMOTE_FAILED", "filename": media.get("filename")})
+
+
 def attachment_header(filename):
     safe = (filename or "download").replace('"', "")
     encoded = quote(filename or "download", safe="")
@@ -168,6 +195,7 @@ def map_agent_send_error(raw):
         "INPUT_NOT_FOUND": "未找到微信输入框",
         "SEND_BUTTON_NOT_FOUND": "未找到发送按钮",
         "WECHAT_WINDOW_NOT_FOUND": "未找到微信窗口或未进入聊天页",
+        "NOT_LOGGED_IN": "微信未登录或正在等待手机确认登录",
         "PASTE_FAILED": "粘贴文件或图片失败",
         "UPLOAD_FAILED": "上传或发送内容失败",
         "TIMEOUT": "发送超时",
@@ -251,6 +279,9 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 data = media.get("data")
                 if not data:
+                    if media.get("url"):
+                        proxy_remote_media(self, media, local_id)
+                        return
                     self.send_json(404, {"error": media.get("reason") or "media is not available", "code": "MEDIA_NOT_AVAILABLE", "filename": media.get("filename")})
                     return
                 ct = content_type(media)

@@ -22,6 +22,18 @@ export async function loadMediaBlobUrl(chatId, localId, variant) {
     objectUrls.set(cacheKey, url);
     return url;
 }
+export async function loadFirstAvailableMediaBlobUrl(chatId, localId, variants) {
+    let lastError;
+    for (const variant of variants) {
+        try {
+            return { url: await loadMediaBlobUrl(chatId, localId, variant), variant, fallback: variant !== variants[0] };
+        }
+        catch (error) {
+            lastError = error;
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error("媒体加载失败");
+}
 export async function downloadMessage(message, variant = "original") {
     if (!message.mediaLocalId)
         return;
@@ -52,7 +64,8 @@ export function bindLazyMediaImages(onLoaded) {
         const scroller = document.querySelector(".messages");
         const wasNearBottom = scroller ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 80 : true;
         img.dataset.loading = "true";
-        void loadMediaBlobUrl(chatId, mediaLocalId, variant).then((url) => {
+        const variants = variant === "original" ? ["original", "preview", "thumb"] : variant === "preview" ? ["preview", "thumb"] : ["thumb"];
+        void loadFirstAvailableMediaBlobUrl(chatId, mediaLocalId, variants).then(({ url }) => {
             img.src = url;
             img.dataset.loaded = "true";
             img.dataset.loading = "false";

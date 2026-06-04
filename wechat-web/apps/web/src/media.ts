@@ -27,6 +27,18 @@ export async function loadMediaBlobUrl(chatId: string, localId: string, variant:
   return url;
 }
 
+export async function loadFirstAvailableMediaBlobUrl(chatId: string, localId: string, variants: MediaVariant[]): Promise<{ url: string; variant: MediaVariant; fallback: boolean }> {
+  let lastError: unknown;
+  for (const variant of variants) {
+    try {
+      return { url: await loadMediaBlobUrl(chatId, localId, variant), variant, fallback: variant !== variants[0] };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("媒体加载失败");
+}
+
 export async function downloadMessage(message: MessageDto, variant: MediaVariant = "original"): Promise<void> {
   if (!message.mediaLocalId) return;
   const response = await fetch(mediaUrl(message.chatId, message.mediaLocalId, variant), { credentials: "include" });
@@ -55,7 +67,8 @@ export function bindLazyMediaImages(onLoaded: (wasNearBottom: boolean) => void):
     const scroller = document.querySelector<HTMLElement>(".messages");
     const wasNearBottom = scroller ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 80 : true;
     img.dataset.loading = "true";
-    void loadMediaBlobUrl(chatId, mediaLocalId, variant).then((url) => {
+    const variants: MediaVariant[] = variant === "original" ? ["original", "preview", "thumb"] : variant === "preview" ? ["preview", "thumb"] : ["thumb"];
+    void loadFirstAvailableMediaBlobUrl(chatId, mediaLocalId, variants).then(({ url }) => {
       img.src = url;
       img.dataset.loaded = "true";
       img.dataset.loading = "false";

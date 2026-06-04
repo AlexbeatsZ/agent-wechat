@@ -35,6 +35,7 @@ export const state: {
   loginMessage: string;
   loginQrFailed: boolean;
   previewImageUrl: string;
+  previewImageStatus: string;
   newMessageCount: number;
   showBottomButton: boolean;
   composing: boolean;
@@ -54,6 +55,7 @@ export const state: {
   loginMessage: "",
   loginQrFailed: false,
   previewImageUrl: "",
+  previewImageStatus: "",
   newMessageCount: 0,
   showBottomButton: false,
   composing: false,

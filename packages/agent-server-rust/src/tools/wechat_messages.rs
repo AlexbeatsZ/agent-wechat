@@ -510,3 +510,55 @@ pub async fn poll_db_for_new_self_message(
     );
     None
 }
+
+/// Poll for any new message after the pre-send max local_id.
+///
+/// This is a fallback for WeChat DBs where `real_sender_id` cannot be mapped
+/// reliably to the logged-in account. For text sends, the content must match.
+/// For media sends, the UI send action is the primary signal and any newer
+/// message in the target chat confirms DB persistence.
+pub async fn poll_db_for_sent_message(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    chat_id: &str,
+    baseline_local_id: i64,
+    expected_text: Option<&str>,
+    attempts: u32,
+    interval_ms: u64,
+) -> Option<i64> {
+    let expected = expected_text.map(str::trim).filter(|s| !s.is_empty());
+
+    for attempt in 1..=attempts {
+        if attempt > 1 {
+            tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
+        }
+
+        let messages = list_messages(account_dir, keys, chat_id, 20, 0);
+        let mut candidates: Vec<_> = messages
+            .into_iter()
+            .filter(|message| message.local_id > baseline_local_id)
+            .collect();
+        candidates.sort_by_key(|message| message.local_id);
+
+        for message in candidates {
+            if expected
+                .map(|text| message.content.trim() == text)
+                .unwrap_or(true)
+            {
+                tracing::info!(
+                    "[send-confirm] fallback confirmed local_id={} baseline={} text_match={}",
+                    message.local_id,
+                    baseline_local_id,
+                    expected.is_some()
+                );
+                return Some(message.local_id);
+            }
+        }
+
+        tracing::debug!(
+            "[send-confirm] fallback poll attempt {attempt}/{attempts}: no matching message newer than {baseline_local_id}"
+        );
+    }
+
+    None
+}

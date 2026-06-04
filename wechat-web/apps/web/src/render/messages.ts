@@ -54,7 +54,7 @@ function renderTextMessage(message: MessageDto): string {
 function renderImageMessage(message: MessageDto): string {
   return `
     <div class="image-bubble" data-preview-image="${message.localId}">
-      <img class="chat-image" data-chat-id="${escapeHtml(message.chatId)}" data-media-local-id="${escapeHtml(message.mediaLocalId || "")}" data-variant="original" alt="图片消息" loading="lazy">
+      <img class="chat-image" data-chat-id="${escapeHtml(message.chatId)}" data-media-local-id="${escapeHtml(message.mediaLocalId || "")}" data-variant="preview" alt="图片消息" loading="lazy">
     </div>
   `;
 }

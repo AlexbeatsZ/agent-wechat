@@ -287,7 +287,10 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
     };
 
     let Some(logged_in_user) = ensure_logged_in_account(&session).await else {
-        return Json(send_error("WECHAT_WINDOW_NOT_FOUND", "NOT_LOGGED_IN"));
+        return Json(send_error(
+            "NOT_LOGGED_IN",
+            "微信未登录或正在等待手机确认登录",
+        ));
     };
 
     let kind = wechat_chats::classify_chat(&input.chat_id);
@@ -399,6 +402,12 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         &keys_for_confirm,
         &chat_id_for_confirm,
     );
+    let baseline_any_before_send = wechat_messages::get_latest_local_id(
+        &logged_in_user,
+        &keys_for_confirm,
+        &chat_id_for_confirm,
+    );
+    let expected_text_for_confirm = input.text.clone();
 
     let plan = SendMessagePlan;
     let params = SendMessageParams {
@@ -456,20 +465,68 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
                     "[send-confirm] DB confirmed: local_id={} method=db_poll",
                     confirmed_id
                 );
+            } else if let Some(any_baseline_id) = baseline_any_before_send {
+                let fallback_id = wechat_messages::poll_db_for_sent_message(
+                    logged_in_user,
+                    &keys_for_confirm,
+                    &chat_id_for_confirm,
+                    any_baseline_id,
+                    expected_text_for_confirm.as_deref(),
+                    8,
+                    500,
+                )
+                .await;
+                if let Some(confirmed_id) = fallback_id {
+                    confirmed = Some(true);
+                    local_id = Some(confirmed_id);
+                    confirmation_method = Some("db_poll_content_fallback".to_string());
+                    tracing::info!(
+                        "[send-confirm] DB fallback confirmed: local_id={} method=db_poll_content_fallback",
+                        confirmed_id
+                    );
+                } else {
+                    confirmed = Some(false);
+                    confirmation_method = Some("db_poll_failed".to_string());
+                    tracing::warn!(
+                        "[send-confirm] DB poll could not confirm new sent message for chat={} (self_baseline={}, any_baseline={})",
+                        chat_id_for_confirm, baseline_id, any_baseline_id
+                    );
+                }
             } else {
-                confirmed = Some(false);
-                confirmation_method = Some("db_poll_failed".to_string());
+                confirmed = None;
+                confirmation_method = Some("ui_sent_db_unavailable".to_string());
                 tracing::warn!(
-                    "[send-confirm] DB poll could not confirm new self message for chat={} (baseline={})",
-                    chat_id_for_confirm, baseline_id
+                    "[send-confirm] DB self poll failed and max local_id baseline unavailable for chat={}; keeping UI send result",
+                    chat_id_for_confirm
                 );
             }
         } else {
             tracing::warn!(
-                "[send-confirm] Could not read baseline for chat={} — DB keys may not be available",
+                "[send-confirm] Could not read self baseline for chat={} — trying max local_id fallback",
                 chat_id_for_confirm
             );
-            confirmation_method = Some("ui_disabled".to_string());
+            if let Some(any_baseline_id) = baseline_any_before_send {
+                let fallback_id = wechat_messages::poll_db_for_sent_message(
+                    logged_in_user,
+                    &keys_for_confirm,
+                    &chat_id_for_confirm,
+                    any_baseline_id,
+                    expected_text_for_confirm.as_deref(),
+                    8,
+                    500,
+                )
+                .await;
+                if let Some(confirmed_id) = fallback_id {
+                    confirmed = Some(true);
+                    local_id = Some(confirmed_id);
+                    confirmation_method = Some("db_poll_content_fallback".to_string());
+                } else {
+                    confirmed = None;
+                    confirmation_method = Some("ui_sent_db_unconfirmed".to_string());
+                }
+            } else {
+                confirmation_method = Some("ui_sent_db_unavailable".to_string());
+            }
         }
     }
 
