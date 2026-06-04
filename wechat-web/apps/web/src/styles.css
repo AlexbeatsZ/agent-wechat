@@ -136,5 +136,6 @@ button#send-btn:hover:not(:disabled) { background: var(--color-primary-hover); }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--color-border); }
   .message-row { max-width: 90%; }
   .composer { grid-template-columns: 1fr; grid-template-areas: "readonly" "input" "status" "actions"; }
-  .composer-actions { justify-content: flex-end; }
+  .composer-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); justify-content: stretch; }
+  .composer-actions button { min-width: 0; }
 }
