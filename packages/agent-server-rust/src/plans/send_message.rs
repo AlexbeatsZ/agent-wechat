@@ -31,6 +31,7 @@ pub enum SendMessagePhase {
 pub struct SendMessagePlanState {
     pub phase: SendMessagePhase,
     pub open_result: Option<OpenChatResult>,
+    pub open_wait_attempts: u32,
     pub confirm_attempts: u32,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
@@ -124,6 +125,7 @@ impl Plan for SendMessagePlan {
         SendMessagePlanState {
             phase: SendMessagePhase::Opening,
             open_result: None,
+            open_wait_attempts: 0,
             confirm_attempts: 0,
             error_code: None,
             error_message: None,
@@ -241,6 +243,16 @@ impl Plan for SendMessagePlan {
 
                 SendMessagePhase::Focusing => {
                     if main_state_id != Some("chat_open") {
+                        if main_state_id == Some("chat") && plan_state.open_wait_attempts < 6 {
+                            plan_state.open_wait_attempts += 1;
+                            return Some(SelectedAction {
+                                action: actions::wait_short(),
+                                frame: identified
+                                    .main_window
+                                    .as_ref()
+                                    .and_then(|m| m.frame.clone()),
+                            });
+                        }
                         plan_state.fail("CHAT_NOT_OPENED", "聊天未打开");
                         return None;
                     }
