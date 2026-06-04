@@ -332,6 +332,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not can_send:
                     self.send_json(403, {"ok": False, "status": "failed", "code": "READONLY_CHAT", "error": "当前会话不支持发送"})
                     return
+                auth = agent_request("/api/status/auth")
+                if auth.get("status") != "logged_in":
+                    self.send_json(200, {
+                        "ok": False,
+                        "status": "failed",
+                        "code": "NOT_LOGGED_IN",
+                        "error": "微信未登录或正在等待手机确认登录",
+                        "raw": auth,
+                    })
+                    return
                 payload = self.read_body()
                 payload_type = payload.get("type") or ("text" if payload.get("text") else None)
                 if payload_type == "text":
