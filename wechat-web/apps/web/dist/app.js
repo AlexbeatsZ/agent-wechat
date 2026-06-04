@@ -159,6 +159,16 @@ function bindEvents() {
             state.status?.loggedIn ? void refreshAll("initial") : void startWechatLogin();
         if (action === "switch-login")
             void startWechatLogin(true);
+        if (action === "open-service-folder") {
+            state.serviceFolderOpen = true;
+            renderChats();
+            return;
+        }
+        if (action === "close-service-folder") {
+            state.serviceFolderOpen = false;
+            renderChats();
+            return;
+        }
         if (action === "server-files")
             void loadServerFiles().catch((e) => { state.error = String(e); renderError(); });
         if (action === "close-files") {

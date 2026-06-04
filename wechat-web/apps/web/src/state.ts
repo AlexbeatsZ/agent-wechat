@@ -38,6 +38,7 @@ export const state: {
   newMessageCount: number;
   showBottomButton: boolean;
   composing: boolean;
+  serviceFolderOpen: boolean;
 } = {
   status: null,
   chats: [],
@@ -56,6 +57,7 @@ export const state: {
   newMessageCount: 0,
   showBottomButton: false,
   composing: false,
+  serviceFolderOpen: false,
 };
 
 export function selectedChat(): ChatDto | undefined {

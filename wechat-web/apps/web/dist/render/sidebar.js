@@ -1,4 +1,5 @@
 import { escapeHtml, labelForKind, state } from "../state.js";
+const SERVICE_KINDS = new Set(["official", "service", "system"]);
 export function renderSidebar() {
     renderStatus();
     renderLogin();
@@ -47,17 +48,64 @@ export function renderChats() {
     if (!list)
         return;
     const scrollTop = list.scrollTop;
-    list.innerHTML = state.chats.length ? state.chats.map((item) => `
-    <button class="chat-item ${item.id === state.selectedChatId ? "active" : ""}" data-chat="${escapeHtml(item.id)}" type="button">
-      <div><strong>${escapeHtml(item.displayName)}</strong><span>${escapeHtml(item.lastMessagePreview || "")}</span></div>
-      <small>${labelForKind(item.kind)}${item.canSend ? "" : " / 只读"}</small>
-      ${item.unreadCount ? `<em>${item.unreadCount}</em>` : ""}
+    const serviceChats = state.chats.filter((item) => SERVICE_KINDS.has(item.kind));
+    const mainChats = state.chats.filter((item) => !SERVICE_KINDS.has(item.kind));
+    const visibleChats = state.serviceFolderOpen ? serviceChats : mainChats;
+    const serviceEntry = !state.serviceFolderOpen && serviceChats.length ? renderServiceFolder(serviceChats) : "";
+    const backEntry = state.serviceFolderOpen ? `
+    <button class="folder-back" type="button" data-action="close-service-folder">
+      <span class="back-icon">‹</span><span>公众号与服务</span><small>${serviceChats.length} 个会话</small>
     </button>
-  `).join("") : `<div class="empty-state">暂无会话。若刚扫码登录，请稍等数据库密钥提取完成后刷新。</div>`;
+  ` : "";
+    list.innerHTML = state.chats.length
+        ? `${backEntry}${serviceEntry}${visibleChats.map(renderChatItem).join("") || `<div class="empty-state">暂无会话</div>`}`
+        : `<div class="empty-state">暂无会话。若刚扫码登录，请稍等数据库密钥提取完成后刷新。</div>`;
     list.scrollTop = scrollTop;
 }
 export function updateActiveChat() {
     document.querySelectorAll("[data-chat]").forEach((button) => {
         button.classList.toggle("active", button.dataset.chat === state.selectedChatId);
     });
+}
+function renderServiceFolder(items) {
+    const unread = items.reduce((sum, item) => sum + item.unreadCount, 0);
+    const latest = items.find((item) => item.lastMessagePreview) || items[0];
+    return `
+    <button class="chat-item service-folder" data-action="open-service-folder" type="button">
+      <span class="chat-avatar service-avatar">服</span>
+      <span class="chat-main">
+        <span class="chat-top"><strong>公众号与服务</strong><time>${formatChatTime(latest?.lastMessageTime)}</time></span>
+        <span class="chat-preview">${escapeHtml(latest?.displayName || "")}${latest?.lastMessagePreview ? `: ${escapeHtml(latest.lastMessagePreview)}` : ""}</span>
+      </span>
+      ${unread ? `<em>${unread > 99 ? "99+" : unread}</em>` : ""}
+    </button>
+  `;
+}
+function renderChatItem(item) {
+    return `
+    <button class="chat-item ${item.id === state.selectedChatId ? "active" : ""}" data-chat="${escapeHtml(item.id)}" type="button">
+      <span class="chat-avatar">${avatarText(item)}</span>
+      <span class="chat-main">
+        <span class="chat-top"><strong>${escapeHtml(item.displayName)}</strong><time>${formatChatTime(item.lastMessageTime)}</time></span>
+        <span class="chat-preview">${escapeHtml(item.lastMessagePreview || labelForKind(item.kind))}</span>
+      </span>
+      ${item.unreadCount ? `<em>${item.unreadCount > 99 ? "99+" : item.unreadCount}</em>` : ""}
+      ${item.canSend || item.unreadCount ? "" : `<small class="readonly-chip">只读</small>`}
+    </button>
+  `;
+}
+function avatarText(item) {
+    if (item.kind === "filehelper")
+        return "文";
+    if (item.isGroup)
+        return "群";
+    return escapeHtml((item.displayName || "?").trim().slice(0, 1).toUpperCase() || "?");
+}
+function formatChatTime(value) {
+    if (!value)
+        return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime()))
+        return "";
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 }

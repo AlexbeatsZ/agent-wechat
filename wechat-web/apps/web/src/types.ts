@@ -4,6 +4,7 @@ export type ChatDto = {
   id: string;
   displayName: string;
   lastMessagePreview?: string;
+  lastMessageTime?: string;
   unreadCount: number;
   isGroup: boolean;
   kind: ChatKind;

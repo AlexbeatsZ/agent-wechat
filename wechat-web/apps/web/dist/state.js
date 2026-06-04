@@ -37,6 +37,7 @@ export const state = {
     newMessageCount: 0,
     showBottomButton: false,
     composing: false,
+    serviceFolderOpen: false,
 };
 export function selectedChat() {
     return state.chats.find((chat) => chat.id === state.selectedChatId);
