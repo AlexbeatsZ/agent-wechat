@@ -243,7 +243,7 @@ impl Plan for SendMessagePlan {
 
                 SendMessagePhase::Focusing => {
                     if main_state_id != Some("chat_open") {
-                        if main_state_id == Some("chat") && plan_state.open_wait_attempts < 6 {
+                        if main_state_id == Some("chat") && plan_state.open_wait_attempts < 20 {
                             plan_state.open_wait_attempts += 1;
                             return Some(SelectedAction {
                                 action: actions::wait_short(),
