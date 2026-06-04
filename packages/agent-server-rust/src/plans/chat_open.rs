@@ -31,16 +31,15 @@ fn find_edit_area(a11y: &A11yNode) -> Option<&A11yNode> {
 
 fn find_edit_near_send(node: &A11yNode) -> Option<&A11yNode> {
     if let Some(children) = &node.children {
-        let has_send = find_send_button(node).is_some();
-        let edit_node = find_editable_text(node);
+        let send_btn = children.iter().find(|child| is_send_button(child));
+        let edit_node = children.iter().find(|child| is_editable_text(child));
 
-        if has_send {
+        if send_btn.is_some() {
             if let Some(edit) = edit_node {
                 return Some(edit);
             }
         }
 
-        // Recurse
         for child in children {
             if let Some(result) = find_edit_near_send(child) {
                 return Some(result);
@@ -50,33 +49,13 @@ fn find_edit_near_send(node: &A11yNode) -> Option<&A11yNode> {
     None
 }
 
-fn find_send_button(node: &A11yNode) -> Option<&A11yNode> {
-    if is_send_button(node) {
-        return Some(node);
-    }
-    for child in node.children.as_deref().unwrap_or(&[]) {
-        if let Some(found) = find_send_button(child) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn find_editable_text(node: &A11yNode) -> Option<&A11yNode> {
+fn is_editable_text(node: &A11yNode) -> bool {
     let is_editable = node
         .states
         .as_ref()
         .map(|s| s.iter().any(|st| st == "EDITABLE"))
         .unwrap_or(false);
-    if is_editable && matches!(node.role.as_str(), "text" | "paragraph" | "entry") {
-        return Some(node);
-    }
-    for child in node.children.as_deref().unwrap_or(&[]) {
-        if let Some(found) = find_editable_text(child) {
-            return Some(found);
-        }
-    }
-    None
+    is_editable && matches!(node.role.as_str(), "text" | "paragraph" | "entry")
 }
 
 fn find_weixin_info_popup_close(a11y: &A11yNode) -> Option<(Bounds, Option<FrameHint>)> {
@@ -137,7 +116,6 @@ impl Plan for ChatOpenPlan {
             });
         }
 
-        // Dismiss popups
         if state.popup.is_some() && identified.popup.is_some() {
             return Some(SelectedAction {
                 action: actions::dismiss_popup(),
@@ -157,7 +135,6 @@ impl Plan for ChatOpenPlan {
                         return None;
                     }
 
-                    // Find click target
                     let chat_list_item = query_selector(a11y, r#"list[name="Chats"] > list-item"#);
                     let click_xy = chat_list_item.and_then(|item| {
                         item.bounds.as_ref().map(|b| {
@@ -194,7 +171,6 @@ impl Plan for ChatOpenPlan {
                         continue;
                     }
 
-                    // No clear_unreads — done
                     plan_state.phase = ChatOpenPhase::Done;
                     tracing::info!("[chat_open] Opening → Done (no clear_unreads)");
                     return Some(SelectedAction {
@@ -252,7 +228,6 @@ impl Plan for ChatOpenPlan {
                         r#"list[name="Messages"] > list-item[name=/^Audio.*Unplay/s]"#,
                     );
 
-                    // Build a sequence: click each unplayed audio with a wait between
                     let mut seq: Vec<Action> = Vec::new();
                     for node in &unplayed {
                         if let Some(bounds) = &node.bounds {

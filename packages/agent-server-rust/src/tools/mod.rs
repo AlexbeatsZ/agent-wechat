@@ -4,6 +4,7 @@ pub mod exec;
 pub mod qr;
 pub mod screenshot;
 pub mod server_files;
+pub mod tool_capabilities;
 pub mod wechat_chats;
 pub mod wechat_contacts;
 pub mod wechat_db;

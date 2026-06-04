@@ -5,6 +5,9 @@ use crate::ia::selectors::{is_send_button, query_selector};
 use crate::ia::types::*;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
 use crate::tools::exec::{exec_command, ExecOptions};
+use crate::tools::tool_capabilities::{
+    paste_file_supports_send, paste_image_supports_send, tool_exists,
+};
 
 pub struct SendMessagePlan;
 
@@ -46,14 +49,13 @@ fn find_edit_and_send_button(a11y: &A11yNode) -> Option<(&A11yNode, &A11yNode)> 
 
 fn find_edit_send_pair(node: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
     if let Some(children) = &node.children {
-        let send_btn = find_send_button(node);
-        let edit_node = find_editable_text(node);
+        let send_btn = children.iter().find(|child| is_send_button(child));
+        let edit_node = children.iter().find(|child| is_editable_text(child));
 
         if let (Some(edit), Some(send)) = (edit_node, send_btn) {
             return Some((edit, send));
         }
 
-        // Log diagnostic info when pair not found at this level
         if send_btn.is_none() || edit_node.is_none() {
             let btns: Vec<&str> = children
                 .iter()
@@ -69,7 +71,6 @@ fn find_edit_send_pair(node: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
             }
         }
 
-        // Recurse
         for child in children {
             if let Some(result) = find_edit_send_pair(child) {
                 return Some(result);
@@ -79,33 +80,13 @@ fn find_edit_send_pair(node: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
     None
 }
 
-fn find_send_button(node: &A11yNode) -> Option<&A11yNode> {
-    if is_send_button(node) {
-        return Some(node);
-    }
-    for child in node.children.as_deref().unwrap_or(&[]) {
-        if let Some(found) = find_send_button(child) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn find_editable_text(node: &A11yNode) -> Option<&A11yNode> {
+fn is_editable_text(node: &A11yNode) -> bool {
     let is_editable = node
         .states
         .as_ref()
         .map(|s| s.iter().any(|st| st == "EDITABLE"))
         .unwrap_or(false);
-    if is_editable && matches!(node.role.as_str(), "text" | "paragraph" | "entry") {
-        return Some(node);
-    }
-    for child in node.children.as_deref().unwrap_or(&[]) {
-        if let Some(found) = find_editable_text(child) {
-            return Some(found);
-        }
-    }
-    None
+    is_editable && matches!(node.role.as_str(), "text" | "paragraph" | "entry")
 }
 
 fn find_weixin_info_popup_close(a11y: &A11yNode) -> Option<(Bounds, Option<FrameHint>)> {
@@ -178,7 +159,6 @@ impl Plan for SendMessagePlan {
             });
         }
 
-        // Dismiss popups
         if state.popup.is_some() && identified.popup.is_some() {
             return Some(SelectedAction {
                 action: actions::dismiss_popup(),
@@ -200,25 +180,6 @@ impl Plan for SendMessagePlan {
                     if main_state_id != Some("chat") && main_state_id != Some("chat_open") {
                         plan_state.fail("WECHAT_WINDOW_NOT_FOUND", "微信窗口未进入聊天页");
                         return None;
-                    }
-
-                    if main_state_id == Some("chat_open")
-                        && state.main_window.selected_chat_id.as_deref()
-                            == Some(params.chat_id.as_str())
-                    {
-                        tracing::info!(
-                            "[send_message] fast path: target chat already open ({})",
-                            params.chat_id
-                        );
-                        plan_state.open_result = Some(OpenChatResult {
-                            ok: true,
-                            username: Some(params.chat_id.clone()),
-                            index: None,
-                            skipped: Some(true),
-                            error: None,
-                        });
-                        plan_state.phase = SendMessagePhase::Focusing;
-                        continue;
                     }
 
                     let chat_list_item = query_selector(a11y, r#"list[name="Chats"] > list-item"#);
@@ -267,9 +228,8 @@ impl Plan for SendMessagePlan {
                         return None;
                     }
 
-                    let found = find_edit_and_send_button(a11y);
-                    let (edit_node, _) = match found {
-                        Some(f) => f,
+                    let (edit_node, _) = match find_edit_and_send_button(a11y) {
+                        Some(found) => found,
                         None => {
                             plan_state.fail("INPUT_NOT_FOUND", "未找到输入框或发送按钮");
                             return None;
@@ -297,23 +257,27 @@ impl Plan for SendMessagePlan {
                                 .and_then(|m| m.frame.clone()),
                         });
                     }
+
                     plan_state.fail("INPUT_NOT_FOUND", "输入框没有可点击区域");
                     return None;
                 }
 
                 SendMessagePhase::Inputting => {
-                    let found = find_edit_and_send_button(a11y);
-                    if found.is_none() {
+                    if find_edit_and_send_button(a11y).is_none() {
                         plan_state.fail("INPUT_NOT_FOUND", "未找到输入框或发送按钮");
                         return None;
                     }
 
                     plan_state.phase = SendMessagePhase::Confirming;
+                    tracing::debug!(
+                        "[send_message] tool capabilities: send-text={}, paste-file --send={}, paste-image --send={}",
+                        tool_exists("send-text", exec_options).await,
+                        paste_file_supports_send(exec_options).await,
+                        paste_image_supports_send(exec_options).await
+                    );
 
-                    // File
                     if let Some(fp) = &params.file_path {
-                        let result =
-                            exec_command("paste-file", &[fp, "--send"], exec_options).await;
+                        let result = exec_command("paste-file", &[fp], exec_options).await;
                         if result.exit_code != 0 {
                             tracing::warn!("[send_message] paste-file failed: {}", result.stderr);
                             plan_state.fail(
@@ -327,7 +291,14 @@ impl Plan for SendMessagePlan {
                             return None;
                         }
                         return Some(SelectedAction {
-                            action: Action::Wait { ms: 100 },
+                            action: Action::Sequence {
+                                actions: vec![
+                                    Action::Wait { ms: 100 },
+                                    Action::Key {
+                                        combo: "Return".to_string(),
+                                    },
+                                ],
+                            },
                             frame: identified
                                 .main_window
                                 .as_ref()
@@ -335,13 +306,11 @@ impl Plan for SendMessagePlan {
                         });
                     }
 
-                    // Image
                     if let Some(ip) = &params.image_path {
                         let mut args: Vec<&str> = vec![ip];
                         if let Some(mime) = &params.image_mime {
                             args.push(mime);
                         }
-                        args.push("--send");
                         let result = exec_command("paste-image", &args, exec_options).await;
                         if result.exit_code != 0 {
                             tracing::warn!("[send_message] paste-image failed: {}", result.stderr);
@@ -356,7 +325,14 @@ impl Plan for SendMessagePlan {
                             return None;
                         }
                         return Some(SelectedAction {
-                            action: Action::Wait { ms: 100 },
+                            action: Action::Sequence {
+                                actions: vec![
+                                    Action::Wait { ms: 100 },
+                                    Action::Key {
+                                        combo: "Return".to_string(),
+                                    },
+                                ],
+                            },
                             frame: identified
                                 .main_window
                                 .as_ref()
@@ -364,23 +340,23 @@ impl Plan for SendMessagePlan {
                         });
                     }
 
-                    // Text
                     if let Some(msg) = &params.message {
-                        let result = exec_command("send-text", &[msg], exec_options).await;
-                        if result.exit_code != 0 {
-                            tracing::warn!("[send_message] send-text failed: {}", result.stderr);
-                            plan_state.fail(
-                                "UPLOAD_FAILED",
-                                if result.stderr.is_empty() {
-                                    "文字发送脚本失败".to_string()
-                                } else {
-                                    result.stderr.clone()
-                                },
-                            );
-                            return None;
-                        }
                         return Some(SelectedAction {
-                            action: Action::Wait { ms: 100 },
+                            action: Action::Sequence {
+                                actions: vec![
+                                    Action::Key {
+                                        combo: "ctrl+a".to_string(),
+                                    },
+                                    Action::Type {
+                                        text: msg.clone(),
+                                        selector: None,
+                                    },
+                                    Action::Wait { ms: 100 },
+                                    Action::Key {
+                                        combo: "Return".to_string(),
+                                    },
+                                ],
+                            },
                             frame: identified
                                 .main_window
                                 .as_ref()
@@ -393,9 +369,8 @@ impl Plan for SendMessagePlan {
                 }
 
                 SendMessagePhase::Confirming => {
-                    let found = find_edit_and_send_button(a11y);
-                    let (_, send_btn) = match found {
-                        Some(f) => f,
+                    let (_, send_btn) = match find_edit_and_send_button(a11y) {
+                        Some(found) => found,
                         None => {
                             plan_state.fail("SEND_BUTTON_NOT_FOUND", "未找到发送按钮");
                             return None;
@@ -437,5 +412,74 @@ impl Plan for SendMessagePlan {
                 SendMessagePhase::Done => return None,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_edit_and_send_button;
+    use crate::ia::types::A11yNode;
+
+    fn node(
+        role: &str,
+        name: &str,
+        states: Option<Vec<&str>>,
+        children: Option<Vec<A11yNode>>,
+    ) -> A11yNode {
+        A11yNode {
+            role: role.to_string(),
+            name: name.to_string(),
+            bounds: None,
+            children,
+            window: None,
+            states: states.map(|items| items.into_iter().map(str::to_string).collect()),
+        }
+    }
+
+    #[test]
+    fn does_not_pair_edit_and_send_across_unrelated_subtrees() {
+        let tree = node(
+            "frame",
+            "root",
+            None,
+            Some(vec![
+                node(
+                    "group",
+                    "editor-only",
+                    None,
+                    Some(vec![node("text", "", Some(vec!["EDITABLE"]), None)]),
+                ),
+                node(
+                    "group",
+                    "button-only",
+                    None,
+                    Some(vec![node("push-button", "Send", None, None)]),
+                ),
+            ]),
+        );
+
+        assert!(find_edit_and_send_button(&tree).is_none());
+    }
+
+    #[test]
+    fn pairs_edit_and_send_within_same_local_container() {
+        let tree = node(
+            "frame",
+            "root",
+            None,
+            Some(vec![node(
+                "group",
+                "composer",
+                None,
+                Some(vec![
+                    node("text", "", Some(vec!["EDITABLE"]), None),
+                    node("push-button", "发送", None, None),
+                ]),
+            )]),
+        );
+
+        let (edit, send) = find_edit_and_send_button(&tree).expect("pair should be found");
+        assert_eq!(edit.role, "text");
+        assert_eq!(send.name, "发送");
     }
 }

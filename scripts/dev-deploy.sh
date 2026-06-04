@@ -6,6 +6,7 @@ set -euo pipefail
 # Usage:
 #   ./scripts/dev-deploy.sh                 # debug build (default)
 #   ./scripts/dev-deploy.sh --release       # release build
+#   ./scripts/dev-deploy.sh --sync-tools    # also sync docker/tools into container
 #   ./scripts/dev-deploy.sh --container abc # specify container name/id
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -15,6 +16,7 @@ CACHE_VOLUME="agent-wechat-cargo-cache"
 
 CONTAINER=""
 BUILD_MODE="debug"
+SYNC_TOOLS="false"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -26,9 +28,13 @@ while [ "$#" -gt 0 ]; do
       BUILD_MODE="release"
       shift
       ;;
+    --sync-tools)
+      SYNC_TOOLS="true"
+      shift
+      ;;
     *)
       echo "unknown argument: $1" >&2
-      echo "Usage: $0 [--container name] [--release]" >&2
+      echo "Usage: $0 [--container name] [--release] [--sync-tools]" >&2
       exit 1
       ;;
   esac
@@ -75,6 +81,7 @@ docker run --rm \
   cargo build $CARGO_ARGS
 
 echo "==> Deploying to container: $CONTAINER"
+echo "Note: dev-deploy only updates the Rust server binary. If you changed docker/tools, rerun with --sync-tools or rebuild the image."
 # Extract binary from cache volume via a temporary container
 TMP_CT=$(docker create -v "$CACHE_VOLUME:/target:ro" "$BUILDER_IMAGE")
 docker cp "$TMP_CT:/target/$BINARY_DIR/agent-server" - | docker cp - "$CONTAINER:/opt/agent-server/"
@@ -88,6 +95,12 @@ if [ "$BUILD_MODE" = "debug" ]; then
 fi
 
 docker rm "$TMP_CT" > /dev/null
+
+if [ "$SYNC_TOOLS" = "true" ]; then
+  echo "==> Syncing docker/tools into container"
+  docker cp "$ROOT_DIR/docker/tools/." "$CONTAINER:/opt/tools/"
+  docker exec "$CONTAINER" sh -lc "sed -i 's/\r$//' /opt/tools/* && chmod +x /opt/tools/*"
+fi
 
 # Kill server process — entrypoint restart loop brings it back with new binary
 docker exec "$CONTAINER" pkill -f '/opt/agent-server/agent-server' 2>/dev/null || true
