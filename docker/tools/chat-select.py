@@ -576,6 +576,18 @@ var hook = Interceptor.attach(addr, {{
     return redirected
 
 
+def wait_for_current_selection(pid, profile, target, attempts=8, interval=0.35):
+    """Re-enumerate until WeChat reports the target as current selection."""
+    for attempt in range(attempts):
+        sessions, _vector_base, _vector_count, current_sel = enumerate_sessions(pid, profile, attempts=1)
+        if current_sel == target:
+            log(f"[chat-select] Verified current selection: {current_sel}")
+            return True
+        log(f"[chat-select] Selection verify attempt {attempt + 1}/{attempts}: current={current_sel!r}, target={target!r}")
+        time.sleep(interval)
+    return False
+
+
 def main():
     # Parse args: chat-select [--force] [--click-xy X Y] [--list] <username>
     args = sys.argv[1:]
@@ -652,7 +664,9 @@ def main():
         result_json(False, error="Session vector base address not found")
     ok = select_by_index(pid, profile, target_index, click_coords, vector_base, vector_count)
     if ok:
-        result_json(True, username=target, index=target_index)
+        if wait_for_current_selection(pid, profile, target):
+            result_json(True, username=target, index=target_index)
+        result_json(False, error=f"Selection verification failed after hook; target={target}")
     else:
         result_json(False, error="Hook did not fire. Click may not have landed on a chat item.")
 

@@ -3,7 +3,7 @@ use crate::ia::actions;
 use crate::ia::helpers::frame_hint_from_node;
 use crate::ia::selectors::{is_send_button, query_selector};
 use crate::ia::types::*;
-use crate::tools::chat_select::{open_chat, OpenChatResult};
+use crate::tools::chat_select::{current_selection, invalidate_cache, open_chat, OpenChatResult};
 use crate::tools::exec::{exec_command, ExecOptions};
 use crate::tools::tool_capabilities::{
     paste_file_supports_send, paste_image_supports_send, tool_exists,
@@ -32,6 +32,8 @@ pub struct SendMessagePlanState {
     pub phase: SendMessagePhase,
     pub open_result: Option<OpenChatResult>,
     pub open_wait_attempts: u32,
+    pub selected_chat_verified: bool,
+    pub selection_verify_attempts: u32,
     pub confirm_attempts: u32,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
@@ -126,6 +128,8 @@ impl Plan for SendMessagePlan {
             phase: SendMessagePhase::Opening,
             open_result: None,
             open_wait_attempts: 0,
+            selected_chat_verified: false,
+            selection_verify_attempts: 0,
             confirm_attempts: 0,
             error_code: None,
             error_message: None,
@@ -227,6 +231,7 @@ impl Plan for SendMessagePlan {
 
                     let skipped = result.skipped.unwrap_or(false);
                     plan_state.open_result = Some(result);
+                    invalidate_cache();
                     plan_state.phase = SendMessagePhase::Focusing;
 
                     if !skipped {
@@ -255,6 +260,41 @@ impl Plan for SendMessagePlan {
                         }
                         plan_state.fail("CHAT_NOT_OPENED", "聊天未打开");
                         return None;
+                    }
+
+                    if !plan_state.selected_chat_verified {
+                        match current_selection(exec_options).await {
+                            Some(current) if current == params.chat_id => {
+                                plan_state.selected_chat_verified = true;
+                            }
+                            Some(current) => {
+                                plan_state.fail(
+                                    "CHAT_NOT_OPENED",
+                                    format!(
+                                        "目标会话校验失败：当前打开的是 {current}，目标是 {}，已阻止发送",
+                                        params.chat_id
+                                    ),
+                                );
+                                return None;
+                            }
+                            None if plan_state.selection_verify_attempts < 3 => {
+                                plan_state.selection_verify_attempts += 1;
+                                return Some(SelectedAction {
+                                    action: actions::wait_short(),
+                                    frame: identified
+                                        .main_window
+                                        .as_ref()
+                                        .and_then(|m| m.frame.clone()),
+                                });
+                            }
+                            None => {
+                                plan_state.fail(
+                                    "CHAT_NOT_OPENED",
+                                    "无法校验当前打开的目标会话，已阻止发送",
+                                );
+                                return None;
+                            }
+                        }
                     }
 
                     let (edit_node, _) = match find_edit_and_send_button(a11y) {
