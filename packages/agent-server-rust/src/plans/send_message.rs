@@ -178,6 +178,23 @@ impl Plan for SendMessagePlan {
                     }
 
                     if main_state_id != Some("chat") && main_state_id != Some("chat_open") {
+                        if query_selector(a11y, r#"push-button[name="Weixin"]"#)
+                            .or_else(|| query_selector(a11y, r#"push-button[name="WeChat"]"#))
+                            .is_some()
+                        {
+                            return Some(SelectedAction {
+                                action: actions::sequence(vec![
+                                    actions::click_selector(
+                                        r#"push-button[name=/^(Weixin|WeChat)$/]"#,
+                                    ),
+                                    actions::wait_long(),
+                                ]),
+                                frame: identified
+                                    .main_window
+                                    .as_ref()
+                                    .and_then(|m| m.frame.clone()),
+                            });
+                        }
                         plan_state.fail("WECHAT_WINDOW_NOT_FOUND", "微信窗口未进入聊天页");
                         return None;
                     }
