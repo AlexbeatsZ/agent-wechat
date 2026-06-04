@@ -586,6 +586,15 @@ pub struct MediaResult {
     pub retryable: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum MediaVariant {
+    Thumb,
+    Preview,
+    Original,
+}
+
 // ============================================
 // Open chat result (shared — generates TypeScript)
 // ============================================

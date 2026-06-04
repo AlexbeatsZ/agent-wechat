@@ -1,4 +1,4 @@
-use crate::ia::types::MediaResult;
+use crate::ia::types::{MediaResult, MediaVariant};
 use crate::tools::wechat_db::{get_db_path, query_wechat_db};
 use crate::tools::wechat_messages::{
     decode_message_content, extract_xml_tag, find_message_db, get_msg_table_name,
@@ -537,6 +537,7 @@ fn find_dat_via_resource_db(
     chat_id: &str,
     local_id: i64,
     create_time: i64,
+    variant: MediaVariant,
 ) -> Option<String> {
     let file_hash = find_file_hash_via_resource_db(account_dir, keys, chat_id, local_id)?;
 
@@ -546,8 +547,12 @@ fn find_dat_via_resource_db(
     let year_month = dt.format("%Y-%m").to_string();
 
     for base in &account_base_paths(account_dir) {
-        // Try mid-res .dat first, then _t.dat thumbnail
-        for suffix in &["", "_t"] {
+        let suffixes: &[&str] = match variant {
+            MediaVariant::Thumb => &["_t", ""],
+            MediaVariant::Preview => &["", "_t"],
+            MediaVariant::Original => &[""],
+        };
+        for suffix in suffixes {
             let dat_path = Path::new(base)
                 .join("msg/attach")
                 .join(&chat_hash)
@@ -1064,6 +1069,8 @@ pub fn get_message_media(
     chat_id: &str,
     local_id: i64,
     image_keys_raw: Option<(String, Option<u8>)>,
+    variant: MediaVariant,
+    _quality: Option<String>,
 ) -> MediaResult {
     let (local_type, create_time, content) =
         match lookup_message_raw(account_dir, keys, chat_id, local_id) {
@@ -1087,23 +1094,27 @@ pub fn get_message_media(
             return get_file_attachment(account_dir, &content, create_time, local_id);
         }
         3 => {
-            // Image
             tracing::info!(
-                "[media] image msg chat_id={}, local_id={}, create_time={}, content_len={}",
+                "[media] image msg chat_id={}, local_id={}, create_time={}, content_len={}, variant={:?}",
                 chat_id,
                 local_id,
                 create_time,
-                content.len()
+                content.len(),
+                variant
             );
 
-            // Try cached thumbnail first
-            if let Some(thumb) = get_image_thumbnail(account_dir, chat_id, local_id, create_time) {
-                tracing::info!("[media] found thumbnail for local_id={}", local_id);
-                return thumb;
+            if variant == MediaVariant::Thumb {
+                if let Some(thumb) =
+                    get_image_thumbnail(account_dir, chat_id, local_id, create_time)
+                {
+                    tracing::info!(
+                        "[media] found filesystem thumbnail for local_id={}",
+                        local_id
+                    );
+                    return thumb;
+                }
             }
-            tracing::info!("[media] no thumbnail for local_id={}", local_id);
 
-            // Try .dat decryption if we have image keys
             let has_image_keys = image_keys_raw.is_some();
             if let Some((aes_hex, xor_byte)) = image_keys_raw {
                 let image_keys = ImageKeys {
@@ -1111,19 +1122,27 @@ pub fn get_message_media(
                     xor_byte,
                 };
 
-                // Primary: look up filename from message_resource.db
-                if let Some(dat_path) =
-                    find_dat_via_resource_db(account_dir, keys, chat_id, local_id, create_time)
-                {
+                if let Some(dat_path) = find_dat_via_resource_db(
+                    account_dir,
+                    keys,
+                    chat_id,
+                    local_id,
+                    create_time,
+                    variant,
+                ) {
                     tracing::info!("[media] found dat via resource-db: {}", dat_path);
                     return decrypt_and_return(&dat_path, &image_keys, local_id);
                 }
 
-                // Fallback: try hardlink.db (older images may not be in resource db)
-                if let Some(dat_path) = find_dat_via_hardlink(account_dir, keys, chat_id, &content)
-                {
-                    tracing::info!("[media] found dat via hardlink: {}", dat_path);
-                    return decrypt_and_return(&dat_path, &image_keys, local_id);
+                if variant != MediaVariant::Thumb {
+                    if let Some(dat_path) =
+                        find_dat_via_hardlink(account_dir, keys, chat_id, &content)
+                    {
+                        if variant != MediaVariant::Original || !dat_path.ends_with("_t.dat") {
+                            tracing::info!("[media] found dat via hardlink: {}", dat_path);
+                            return decrypt_and_return(&dat_path, &image_keys, local_id);
+                        }
+                    }
                 }
 
                 tracing::warn!(
@@ -1135,7 +1154,27 @@ pub fn get_message_media(
                 tracing::warn!("[media] no image keys available for local_id={}", local_id);
             }
 
-            // Image exists but can't be retrieved
+            if variant == MediaVariant::Preview {
+                if let Some(thumb) =
+                    get_image_thumbnail(account_dir, chat_id, local_id, create_time)
+                {
+                    tracing::info!(
+                        "[media] preview fallback thumbnail for local_id={}",
+                        local_id
+                    );
+                    return thumb;
+                }
+            }
+
+            if variant == MediaVariant::Original {
+                return pending_for(
+                    "image",
+                    "jpeg",
+                    format!("msg_{local_id}.jpg"),
+                    "original_not_available",
+                );
+            }
+
             if has_image_keys {
                 pending_for(
                     "image",

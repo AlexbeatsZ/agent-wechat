@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::context::create_context;
 use crate::db::get_db;
 use crate::execution::run_execution_loop;
-use crate::ia::types::{MediaResult, Message, SendResult, SubscriptionEvent};
+use crate::ia::types::{MediaResult, MediaVariant, Message, SendResult, SubscriptionEvent};
 use crate::plans::send_message::{SendMessageParams, SendMessagePlan};
 use crate::sessions::manager::{ensure_logged_in_account, get_session};
 use crate::tools::chat_select;
@@ -32,10 +32,17 @@ pub struct ListParams {
 pub struct MediaParams {
     #[serde(rename = "ensureDownload", default)]
     ensure_download: bool,
+    #[serde(default = "default_media_variant")]
+    variant: MediaVariant,
+    quality: Option<String>,
 }
 
 fn default_limit() -> i64 {
     50
+}
+
+fn default_media_variant() -> MediaVariant {
+    MediaVariant::Preview
 }
 
 async fn ensure_keys_for_media(
@@ -192,6 +199,8 @@ pub async fn get_media(
         &chat_id,
         local_id,
         image_keys,
+        params.variant,
+        params.quality.clone(),
     );
 
     if params.ensure_download && media.retryable == Some(true) {
@@ -206,9 +215,13 @@ pub async fn get_media(
             let db = get_db();
             get_stored_keys(&db, &session.id, &logged_in_user)
         };
-        let refreshed_keys =
-            ensure_keys_for_media(&logged_in_user, &session.id, &logged_in_user, refreshed_keys)
-                .await;
+        let refreshed_keys = ensure_keys_for_media(
+            &logged_in_user,
+            &session.id,
+            &logged_in_user,
+            refreshed_keys,
+        )
+        .await;
         let refreshed_image_keys = {
             let db = get_db();
             get_image_keys(&db, &session.id, &logged_in_user)
@@ -219,6 +232,8 @@ pub async fn get_media(
             &chat_id,
             local_id,
             refreshed_image_keys,
+            params.variant,
+            params.quality.clone(),
         );
     }
 

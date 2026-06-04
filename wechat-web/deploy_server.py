@@ -227,13 +227,27 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/chats/") and path.endswith("/messages"):
                 chat_id = unquote(path.split("/")[3])
                 messages = agent_request(f"/api/messages/{quote(chat_id, safe='')}?{parsed.query}")
-                self.send_json(200, [normalize_message(message) for message in messages])
+                normalized = [normalize_message(message) for message in messages]
+                normalized.sort(key=lambda m: m.get("timestamp") or "")
+                self.send_json(200, normalized)
             elif "/media/" in path:
                 parts = path.split("/")
                 chat_id, local_id = unquote(parts[3]), unquote(parts[5])
-                media = agent_request(f"/api/messages/{quote(chat_id, safe='')}/media/{quote(local_id, safe='')}?ensureDownload=true")
-                if media.get("type") == "pending" or media.get("retryable") is True or media.get("reason") in {"not_downloaded", "path_not_found", "pending"}:
-                    self.send_json(202, {"error": "文件尚未下载到本机微信", "code": "MEDIA_PENDING", "reason": media.get("reason"), "filename": media.get("filename"), "retryable": True})
+                query = parse_qs(parsed.query)
+                variant = query.get("variant", ["preview"])[0]
+                if variant not in {"thumb", "preview", "original"}:
+                    variant = "preview"
+                media = agent_request(f"/api/messages/{quote(chat_id, safe='')}/media/{quote(local_id, safe='')}?ensureDownload=true&variant={quote(variant, safe='')}")
+                pending_reasons = {"not_downloaded", "path_not_found", "pending", "original_not_available"}
+                if media.get("type") == "pending" or media.get("retryable") is True or media.get("reason") in pending_reasons:
+                    is_original = media.get("reason") == "original_not_available" or variant == "original"
+                    self.send_json(202, {
+                        "error": "原图尚未下载到本机微信" if is_original else "文件尚未下载到本机微信",
+                        "code": "ORIGINAL_NOT_AVAILABLE" if is_original else "MEDIA_PENDING",
+                        "reason": media.get("reason"),
+                        "filename": media.get("filename"),
+                        "retryable": True,
+                    })
                     return
                 data = media.get("data")
                 if not data:
