@@ -262,6 +262,54 @@ pub struct FileInput {
     filename: String,
 }
 
+fn path_safe_component(value: &str, fallback: &str) -> String {
+    let safe: String = value
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let safe = safe.trim().trim_matches('.');
+    if safe.is_empty() {
+        fallback.to_string()
+    } else {
+        safe.to_string()
+    }
+}
+
+fn ascii_safe_component(value: &str, fallback: &str) -> String {
+    let safe: String = value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let safe = safe.trim().trim_matches('.');
+    if safe.is_empty() {
+        fallback.to_string()
+    } else {
+        safe.to_string()
+    }
+}
+
+fn sent_file_path(chat_id: &str, filename: &str) -> String {
+    let chat_dir = ascii_safe_component(chat_id, "chat");
+    let filename = path_safe_component(filename, "upload");
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("/data/sent-files/{chat_dir}/{millis}_{filename}")
+}
+
 fn send_error(code: &str, message: impl Into<String>) -> SendResult {
     SendResult {
         success: false,
@@ -336,45 +384,34 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         image_path = Some(path);
     }
 
-    // Decode base64 file to temp file
+    // Decode base64 files to a persistent spool path. Linux WeChat may keep
+    // self-sent large files as CDN-only records instead of copying them into
+    // msg/file, so the agent keeps its own download copy under /data.
     let mut file_path: Option<String> = None;
     if let Some(ref f) = input.file {
-        // Sanitize filename: keep ASCII alphanumerics, dot, hyphen, underscore;
-        // replace everything else (including CJK) with underscore so the temp
-        // path stays portable across locales.  The dot is preserved so that
-        // file extensions survive (e.g. "遗憾.pdf" → "__.pdf"); the mangled
-        // stem is acceptable since this is a transient temp path.
-        let safe_name: String = f
-            .filename
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        let path = format!(
-            "/tmp/send_file_{}_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
-            safe_name
-        );
+        let path = sent_file_path(&input.chat_id, &f.filename);
         match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &f.data) {
-            Ok(bytes) => match std::fs::write(&path, &bytes) {
-                Ok(_) => {
-                    file_path = Some(path);
+            Ok(bytes) => {
+                if let Some(parent) = std::path::Path::new(&path).parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return Json(send_error(
+                            "UPLOAD_FAILED",
+                            format!("Failed to create sent file directory: {e}"),
+                        ));
+                    }
                 }
-                Err(e) => {
-                    return Json(send_error(
-                        "UPLOAD_FAILED",
-                        format!("Failed to write temp file: {e}"),
-                    ));
+                match std::fs::write(&path, &bytes) {
+                    Ok(_) => {
+                        file_path = Some(path);
+                    }
+                    Err(e) => {
+                        return Json(send_error(
+                            "UPLOAD_FAILED",
+                            format!("Failed to write sent file copy: {e}"),
+                        ));
+                    }
                 }
-            },
+            }
             Err(e) => {
                 return Json(send_error(
                     "UPLOAD_FAILED",
@@ -428,10 +465,6 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
     if let Some(p) = &image_path {
         let _ = std::fs::remove_file(p);
     }
-    if let Some(p) = &file_path {
-        let _ = std::fs::remove_file(p);
-    }
-
     // ── DB-based send confirmation (P9) ──
     let mut confirmed: Option<bool> = None;
     let mut local_id: Option<i64> = None;

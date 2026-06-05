@@ -1107,6 +1107,7 @@ fn get_file_attachment(
             Path::new(base).join("msg/file").join(&year_month),
             Path::new(base).join("msg/attach"),
             Path::new(base).join("cache").join(&year_month),
+            Path::new("/data/sent-files").to_path_buf(),
         ];
         for root in search_roots {
             if let Some(found) = find_named_file(&root, &filename, 4) {
@@ -1136,6 +1137,7 @@ fn get_file_attachment(
                 Path::new(base).join("msg/file").join(&year_month),
                 Path::new(base).join("cache").join(&year_month),
                 Path::new(base).join("msg/attach"),
+                Path::new("/data/sent-files").to_path_buf(),
             ];
             for root in sized_roots {
                 if let Some(found) = find_sized_file(&root, expected_size, &ext, 4) {
@@ -1244,6 +1246,8 @@ fn file_matches_extension(path: &Path, ext: &str) -> bool {
 
     match ext.as_str() {
         "docx" | "xlsx" | "pptx" | "zip" => header.starts_with(b"PK"),
+        "rar" => header.starts_with(b"Rar!"),
+        "7z" => header.starts_with(b"7z"),
         "doc" | "xls" | "ppt" => header.starts_with(&[0xd0, 0xcf, 0x11, 0xe0]),
         "pdf" => header.starts_with(b"%PDF"),
         "png" => header.starts_with(&[0x89, b'P', b'N', b'G']),

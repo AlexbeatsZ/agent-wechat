@@ -290,7 +290,7 @@ class Handler(BaseHTTPRequestHandler):
                 media = agent_request(f"/api/messages/{quote(chat_id, safe='')}/media/{quote(local_id, safe='')}?ensureDownload=true&variant={quote(variant, safe='')}")
                 pending_reasons = {"not_downloaded", "path_not_found", "pending", "original_not_available"}
                 if media.get("type") == "pending" or media.get("retryable") is True or media.get("reason") in pending_reasons:
-                    is_original = media.get("reason") == "original_not_available" or variant == "original"
+                    is_original = media.get("type") == "image" and (media.get("reason") == "original_not_available" or variant == "original")
                     self.send_json(202, {
                         "error": "原图尚未下载到本机微信" if is_original else "文件尚未下载到本机微信",
                         "code": "ORIGINAL_NOT_AVAILABLE" if is_original else "MEDIA_PENDING",
