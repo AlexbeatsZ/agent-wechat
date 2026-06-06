@@ -1,0 +1,42 @@
+Remote user files migration manifest
+Generated: 2026-06-07 02:02:56 +08:00
+Source: meta@100.106.169.46:C:/Users/Meta
+Destination: C:\Users\Meta\Project\Workspaces\agent-wechat\remote-user-files
+
+Total files: 8142
+Total directories: 429
+Total bytes: 4135419286
+
+Top-level migrated items:
+DIR  agent-wechat-agent-flow6  files=3  bytes=10359821
+FILE agent-wechat-agent-flow6.tgz  bytes=4079115
+FILE agent-wechat-agent-media.py  bytes=892
+DIR  agent-wechat-build-885ada2  files=99  bytes=619883
+FILE agent-wechat-codex-ui-refactor.tar  bytes=962859008
+DIR  agent-wechat-deploy  files=12  bytes=2022760866
+DIR  agent-wechat-docker-config-noauth  files=5  bytes=148
+DIR  agent-wechat-full-work-9d5677e  files=7937  bytes=114447920
+FILE agent-wechat-full-work-9d5677e.tgz  bytes=19523333
+FILE agent-wechat-media-route-test.py  bytes=1008
+FILE agent-wechat-media-scan.py  bytes=2949
+FILE agent-wechat-probe.ps1  bytes=3087
+FILE agent-wechat-raw-msg.py  bytes=589
+DIR  agent-wechat-send-core-fix  files=62  bytes=443356
+FILE agent-wechat-send-core-fix.tgz  bytes=95088
+DIR  agent-wechat-tools-flow5-tools  files=2  bytes=15887
+FILE agent-wechat-tools-flow5.tgz  bytes=5123
+FILE agent-wechat-verify-media-fix.py  bytes=1119
+FILE remote-agent-wechat.Dockerfile  bytes=782
+FILE remote-build-deploy-agent-wechat.cmd  bytes=619
+FILE wechat-web-codex-current.tar  bytes=43231232
+DIR  wechat-web-deploy  files=7  bytes=253942
+FILE wechat-web-deploy-local.tar.gz  bytes=956713519
+
+Large files kept local and intentionally not tracked by Git:
+.\remote-user-files\agent-wechat-codex-ui-refactor.tar  bytes=962859008
+.\remote-user-files\agent-wechat-deploy\agent-wechat-deploy-8ea837d.tar  bytes=962858496
+.\remote-user-files\agent-wechat-deploy\agent-wechat-deploy-cc30464.tar  bytes=962858496
+.\remote-user-files\wechat-web-deploy-local.tar.gz  bytes=956713519
+
+Sensitive file note:
+agent-wechat-token.txt was discovered on the server but was not copied into this repository migration archive.

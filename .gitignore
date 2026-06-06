@@ -20,6 +20,12 @@ packages/agent-server-rust/bindings/
 
 # Build caches
 .turbo
+
+# Local migration archive from the Windows server. Keep the copied files on disk,
+# but do not push deployment archives, dependency folders, or copied secrets.
+remote-user-files/**
+!remote-user-files/
+!remote-user-files/MANIFEST.txt
 docs/.astro
 docs/public/og-image.png
 docs/public/og/
