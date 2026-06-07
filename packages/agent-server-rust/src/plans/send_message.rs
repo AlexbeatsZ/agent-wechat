@@ -9,11 +9,7 @@ use crate::tools::tool_capabilities::{
     paste_file_supports_send, paste_image_supports_send, tool_exists,
 };
 
-async fn try_lowlevel_text_send(
-    chat_id: &str,
-    message: &str,
-    exec_options: &ExecOptions,
-) -> bool {
+async fn try_lowlevel_text_send(chat_id: &str, message: &str, exec_options: &ExecOptions) -> bool {
     if !tool_exists("send-text-lowlevel", exec_options).await {
         return false;
     }
@@ -210,6 +206,19 @@ impl Plan for SendMessagePlan {
                     if params.readonly {
                         plan_state.fail("READONLY_CHAT", "当前会话不支持发送");
                         return None;
+                    }
+
+                    if main_state_id == Some("login_account") {
+                        return Some(SelectedAction {
+                            action: actions::sequence(vec![
+                                actions::click_login(),
+                                actions::wait_long(),
+                            ]),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
+                        });
                     }
 
                     if main_state_id != Some("chat") && main_state_id != Some("chat_open") {

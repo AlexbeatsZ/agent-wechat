@@ -331,7 +331,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.proxy_file_download(file_id)
             else:
                 self.serve_static(path)
-        except (HTTPError, URLError, TimeoutError, OSError) as error:
+        except TimeoutError as error:
+            self.send_json(504, {"error": f"agent-wechat request timed out: {error}", "code": "AGENT_TIMEOUT"})
+        except (HTTPError, URLError, OSError) as error:
             self.api_error(error)
 
     def do_POST(self):
@@ -396,7 +398,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"ok": True, "status": "sent", "raw": raw, "kind": kind})
             else:
                 self.send_json(404, {"error": "not found", "code": "NOT_FOUND"})
-        except (HTTPError, URLError, TimeoutError, OSError) as error:
+        except TimeoutError as error:
+            self.send_json(504, {"error": f"agent-wechat request timed out: {error}", "code": "AGENT_TIMEOUT"})
+        except (HTTPError, URLError, OSError) as error:
             self.api_error(error)
 
     def proxy_file_download(self, file_id):

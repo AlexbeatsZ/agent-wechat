@@ -75,7 +75,8 @@ impl IAState for LoginAccountState {
 
     fn identify(&self, args: &IdentifyArgs) -> Result<IdentifyResult, String> {
         let log_in_btn = query_selector(args.a11y, r#"push-button[name="Log In"]"#)
-            .or_else(|| query_selector(args.a11y, r#"push-button[name="Open WeChat"]"#));
+            .or_else(|| query_selector(args.a11y, r#"push-button[name="Open WeChat"]"#))
+            .or_else(|| query_selector(args.a11y, r#"push-button[name="Enter Weixin"]"#));
         if log_in_btn.is_none() {
             return Ok(IdentifyResult {
                 identified: false,
@@ -85,7 +86,9 @@ impl IAState for LoginAccountState {
 
         let has_switch =
             query_selector(args.a11y, r#"push-button[name="Switch Account"]"#).is_some();
-        if !has_switch {
+        let has_transfer =
+            query_selector(args.a11y, r#"push-button[name="Transfer files only"]"#).is_some();
+        if !has_switch && !has_transfer {
             return Ok(IdentifyResult {
                 identified: false,
                 frame: None,
@@ -94,7 +97,8 @@ impl IAState for LoginAccountState {
 
         Ok(IdentifyResult {
             identified: true,
-            frame: find_frame_for(args.a11y, r#"push-button[name="Switch Account"]"#),
+            frame: find_frame_for(args.a11y, r#"push-button[name="Switch Account"]"#)
+                .or_else(|| find_frame_for(args.a11y, r#"push-button[name="Enter Weixin"]"#)),
         })
     }
 

@@ -573,7 +573,6 @@ fn find_dat_via_resource_db(
     None
 }
 
-
 fn find_cached_dat_by_local_id(
     account_dir: &str,
     chat_id: &str,
@@ -586,8 +585,8 @@ fn find_cached_dat_by_local_id(
     }
 
     let chat_hash = format!("{:x}", Md5::digest(chat_id.as_bytes()));
-    let year_month = chrono::DateTime::from_timestamp(create_time, 0)
-        .map(|dt| dt.format("%Y-%m").to_string());
+    let year_month =
+        chrono::DateTime::from_timestamp(create_time, 0).map(|dt| dt.format("%Y-%m").to_string());
 
     let mut roots = Vec::new();
     for base in &account_base_paths(account_dir) {
@@ -871,7 +870,6 @@ fn decrypt_and_return(dat_path: &str, image_keys: &ImageKeys, local_id: i64) -> 
 }
 
 // ── Emoji ────────────────────────────────────────────────────────────────────
-
 
 pub fn decode_image_dat_path(
     dat_path: &Path,
@@ -1200,7 +1198,12 @@ fn find_named_file(root: &Path, filename: &str, max_depth: usize) -> Option<std:
     None
 }
 
-fn find_sized_file(root: &Path, expected_size: u64, ext: &str, max_depth: usize) -> Option<PathBuf> {
+fn find_sized_file(
+    root: &Path,
+    expected_size: u64,
+    ext: &str,
+    max_depth: usize,
+) -> Option<PathBuf> {
     if max_depth == 0 || !root.exists() {
         return None;
     }
@@ -1321,16 +1324,18 @@ pub fn get_message_media(
                     xor_byte,
                 };
 
-                if let Some(dat_path) = find_dat_via_resource_db(
-                    account_dir,
-                    keys,
-                    chat_id,
-                    local_id,
-                    create_time,
-                    variant,
-                ) {
-                    tracing::info!("[media] found dat via resource-db: {}", dat_path);
-                    return decrypt_and_return(&dat_path, &image_keys, local_id);
+                if variant != MediaVariant::Original {
+                    if let Some(dat_path) = find_dat_via_resource_db(
+                        account_dir,
+                        keys,
+                        chat_id,
+                        local_id,
+                        create_time,
+                        variant,
+                    ) {
+                        tracing::info!("[media] found dat via resource-db: {}", dat_path);
+                        return decrypt_and_return(&dat_path, &image_keys, local_id);
+                    }
                 }
 
                 if variant != MediaVariant::Thumb {
@@ -1344,11 +1349,21 @@ pub fn get_message_media(
                     }
                 }
 
-                if let Some(dat_path) =
-                    find_cached_dat_by_local_id(account_dir, chat_id, local_id, create_time, variant)
-                {
-                    tracing::info!("[media] found cached dat for local_id={}: {}", local_id, dat_path);
-                    return decrypt_and_return(&dat_path, &image_keys, local_id);
+                if variant != MediaVariant::Original {
+                    if let Some(dat_path) = find_cached_dat_by_local_id(
+                        account_dir,
+                        chat_id,
+                        local_id,
+                        create_time,
+                        variant,
+                    ) {
+                        tracing::info!(
+                            "[media] found cached dat for local_id={}: {}",
+                            local_id,
+                            dat_path
+                        );
+                        return decrypt_and_return(&dat_path, &image_keys, local_id);
+                    }
                 }
 
                 tracing::warn!(
