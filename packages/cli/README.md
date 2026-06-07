@@ -124,7 +124,8 @@ The CLI reads configuration from environment variables and a local token file:
 |--------|-------------|
 | `AGENT_WECHAT_URL` | Server URL (default: `http://localhost:6174`) |
 | `AGENT_WECHAT_TOKEN` | Auth token (overrides token file) |
-| `~/.config/agent-wechat/token` | Auto-generated auth token |
+| `AGENT_WECHAT_TOKEN_FILE` | Auth token file path override |
+| `~/Project/Scripts/Docker/agent-wechat/token` | Auto-generated auth token |
 
 The auth token is generated automatically on first run and shared with the container via a read-only volume mount.
 
@@ -145,7 +146,7 @@ wx up
 This starts a container named `agent-wechat` with:
 - **Port 6174** — REST API + VNC web viewer at `/vnc/` (exposed to all interfaces)
 - Persistent volumes for data and WeChat home directory
-- Auth token from `~/.config/agent-wechat/token` (auto-generated on first run)
+- Auth token from `~/Project/Scripts/Docker/agent-wechat/token` (auto-generated on first run)
 
 To route all container traffic through a proxy:
 
@@ -174,7 +175,7 @@ services:
     volumes:
       - agent-wechat-data:/data
       - agent-wechat-home:/home/wechat
-      - ~/.config/agent-wechat/token:/data/auth-token:ro
+      - ~/Project/Scripts/Docker/agent-wechat/token:/data/auth-token:ro
     environment:
       - PROXY=${PROXY:-}    # optional: user:pass@host:port
     restart: unless-stopped
@@ -187,9 +188,9 @@ volumes:
 Generate a token before starting:
 
 ```bash
-mkdir -p ~/.config/agent-wechat
-openssl rand -hex 32 > ~/.config/agent-wechat/token
-chmod 600 ~/.config/agent-wechat/token
+mkdir -p ~/Project/Scripts/Docker/agent-wechat
+openssl rand -hex 32 > ~/Project/Scripts/Docker/agent-wechat/token
+chmod 600 ~/Project/Scripts/Docker/agent-wechat/token
 ```
 
 If running alongside OpenClaw on the same Docker network, set `serverUrl` to `http://agent-wechat:6174` in your OpenClaw config.

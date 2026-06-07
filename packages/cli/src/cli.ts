@@ -20,8 +20,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MONOREPO_ROOT = path.resolve(__dirname, "../../..");
 
 // Auth token paths
-const TOKEN_DIR = path.join(os.homedir(), ".config", "agent-wechat");
-const TOKEN_PATH = path.join(TOKEN_DIR, "token");
+const DEFAULT_DOCKER_DIR = path.join(os.homedir(), "Project", "Scripts", "Docker", "agent-wechat");
+const TOKEN_PATH = process.env.AGENT_WECHAT_TOKEN_FILE || path.join(DEFAULT_DOCKER_DIR, "token");
+const TOKEN_DIR = path.dirname(TOKEN_PATH);
 
 function ensureToken(): string {
   try {

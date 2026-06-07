@@ -101,9 +101,9 @@ See [`docker-compose.yml`](./docker-compose.yml) for a full example. Key points:
 
 ```yaml
 # Generate a token first:
-#   mkdir -p ~/.config/agent-wechat
-#   openssl rand -hex 32 > ~/.config/agent-wechat/token
-#   chmod 600 ~/.config/agent-wechat/token
+#   mkdir -p ~/Project/Scripts/Docker/agent-wechat
+#   openssl rand -hex 32 > ~/Project/Scripts/Docker/agent-wechat/token
+#   chmod 600 ~/Project/Scripts/Docker/agent-wechat/token
 
 services:
   agent-wechat:
@@ -118,7 +118,7 @@ services:
     volumes:
       - agent-wechat-data:/data
       - agent-wechat-home:/home/wechat
-      - ~/.config/agent-wechat/token:/data/auth-token:ro
+      - ~/Project/Scripts/Docker/agent-wechat/token:/data/auth-token:ro
     environment:
       - PROXY=${PROXY:-}    # optional: user:pass@host:port
     restart: unless-stopped

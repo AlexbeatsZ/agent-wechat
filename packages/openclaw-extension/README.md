@@ -43,7 +43,7 @@ services:
     volumes:
       - agent-wechat-data:/data
       - agent-wechat-home:/home/wechat
-      - ~/.config/agent-wechat/token:/data/auth-token:ro
+      - ~/Project/Scripts/Docker/agent-wechat/token:/data/auth-token:ro
     restart: unless-stopped
 
 volumes:
@@ -54,9 +54,9 @@ volumes:
 Generate a token before starting:
 
 ```bash
-mkdir -p ~/.config/agent-wechat
-openssl rand -hex 32 > ~/.config/agent-wechat/token
-chmod 600 ~/.config/agent-wechat/token
+mkdir -p ~/Project/Scripts/Docker/agent-wechat
+openssl rand -hex 32 > ~/Project/Scripts/Docker/agent-wechat/token
+chmod 600 ~/Project/Scripts/Docker/agent-wechat/token
 docker compose up -d
 ```
 
@@ -71,7 +71,7 @@ openclaw plugins install @agent-wechat/wechat
 ### 3. Configure the channel
 
 ```bash
-# Uses defaults (localhost:6174, token from ~/.config/agent-wechat/token)
+# Uses defaults (localhost:6174, token from ~/Project/Scripts/Docker/agent-wechat/token)
 openclaw channels add --channel wechat
 
 # Override server URL and token
@@ -93,7 +93,7 @@ Or edit `~/.openclaw/openclaw.json` directly:
 }
 ```
 
-For local setups, the token is automatically read from `~/.config/agent-wechat/token` (shared with the CLI and container), so you don't need to set it in the config. When connecting to a remote server, add the `token` field.
+For local setups, the token is automatically read from `~/Project/Scripts/Docker/agent-wechat/token` (shared with the CLI and container), so you don't need to set it in the config. When connecting to a remote server, add the `token` field.
 
 ### 4. Restart the gateway
 
@@ -143,7 +143,7 @@ All config lives under `channels.wechat` in OpenClaw's config file:
 |-----|------|---------|-------------|
 | `enabled` | boolean | `false` | Enable the WeChat channel |
 | `serverUrl` | string | — | agent-wechat REST API URL |
-| `token` | string | — | Auth token (auto-read from `~/.config/agent-wechat/token` for local setups) |
+| `token` | string | — | Auth token (auto-read from `~/Project/Scripts/Docker/agent-wechat/token` for local setups) |
 | `dmPolicy` | `"open" \| "allowlist" \| "disabled"` | `"disabled"` | Who can DM the bot |
 | `allowFrom` | string[] | `[]` | wxid allowlist for DMs (when policy is `allowlist`) |
 | `groupPolicy` | `"open" \| "allowlist" \| "disabled"` | `"disabled"` | Group message policy |

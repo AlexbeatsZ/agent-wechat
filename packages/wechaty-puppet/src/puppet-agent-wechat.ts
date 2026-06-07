@@ -57,7 +57,9 @@ export class PuppetAgentWeChat extends PUPPET.Puppet {
     if (envToken) return envToken
 
     try {
-      return readFileSync(join(homedir(), '.config', 'agent-wechat', 'token'), 'utf-8').trim()
+      const tokenFile = process.env['AGENT_WECHAT_TOKEN_FILE']
+        ?? join(homedir(), 'Project', 'Scripts', 'Docker', 'agent-wechat', 'token')
+      return readFileSync(tokenFile, 'utf-8').trim()
     } catch {
       return undefined
     }

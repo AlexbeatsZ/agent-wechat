@@ -28,7 +28,7 @@ import PuppetAgentWeChat from '@agent-wechat/wechaty-puppet'
 const bot = WechatyBuilder.build({
   puppet: new PuppetAgentWeChat({
     serverUrl: 'http://localhost:6174',  // optional, this is the default
-    token: 'your-token',                 // optional, reads from ~/.config/agent-wechat/token
+    token: 'your-token',                 // optional, reads from ~/Project/Scripts/Docker/agent-wechat/token
   })
 })
 
@@ -52,7 +52,7 @@ await bot.start()
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `serverUrl` | string | `http://localhost:6174` | agent-wechat server URL |
-| `token` | string | auto | Auth token. Falls back to `AGENT_WECHAT_TOKEN` env var, then `~/.config/agent-wechat/token` |
+| `token` | string | auto | Auth token. Falls back to `AGENT_WECHAT_TOKEN` env var, `AGENT_WECHAT_TOKEN_FILE`, then `~/Project/Scripts/Docker/agent-wechat/token` |
 | `pollIntervalMs` | number | `2000` | Message polling interval in milliseconds |
 
 ## Supported Features

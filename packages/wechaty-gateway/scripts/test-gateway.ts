@@ -23,7 +23,9 @@ function getArg(name: string): string | undefined {
 
 function loadLocalToken(): string | undefined {
   try {
-    return readFileSync(join(homedir(), '.config', 'agent-wechat', 'token'), 'utf-8').trim()
+    const tokenFile = process.env['AGENT_WECHAT_TOKEN_FILE']
+      ?? join(homedir(), 'Project', 'Scripts', 'Docker', 'agent-wechat', 'token')
+    return readFileSync(tokenFile, 'utf-8').trim()
   } catch {
     return undefined
   }
@@ -31,7 +33,7 @@ function loadLocalToken(): string | undefined {
 
 const token = getArg('token') ?? process.env['WECHATY_TOKEN'] ?? loadLocalToken()
 if (!token) {
-  console.error('No token found. Set WECHATY_TOKEN or create ~/.config/agent-wechat/token')
+  console.error('No token found. Set WECHATY_TOKEN or create ~/Project/Scripts/Docker/agent-wechat/token')
   process.exit(1)
 }
 const endpoint = getArg('endpoint') ?? '127.0.0.1:8788'

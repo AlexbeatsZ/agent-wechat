@@ -7,7 +7,8 @@
  * Connects to a gateway behind an HTTPS-terminating proxy (e.g. Caddy, Cloudflare).
  * The proxy handles TLS; the gateway server itself runs plain gRPC behind it.
  *
- * Token is read from: --token flag, WECHATY_TOKEN env, or ~/.config/agent-wechat/token
+ * Token is read from: --token flag, WECHATY_TOKEN env, AGENT_WECHAT_TOKEN_FILE,
+ * or ~/Project/Scripts/Docker/agent-wechat/token
  */
 
 // Override wechaty's bundled self-signed CA cert with system CAs so gRPC can
@@ -33,7 +34,9 @@ function getArg(name: string): string | undefined {
 
 function loadLocalToken(): string | undefined {
   try {
-    return readFileSync(join(homedir(), '.config', 'agent-wechat', 'token'), 'utf-8').trim()
+    const tokenFile = process.env['AGENT_WECHAT_TOKEN_FILE']
+      ?? join(homedir(), 'Project', 'Scripts', 'Docker', 'agent-wechat', 'token')
+    return readFileSync(tokenFile, 'utf-8').trim()
   } catch {
     return undefined
   }
@@ -41,7 +44,7 @@ function loadLocalToken(): string | undefined {
 
 const token = getArg('token') ?? process.env['WECHATY_TOKEN'] ?? loadLocalToken()
 if (!token) {
-  console.error('No token found. Set WECHATY_TOKEN or create ~/.config/agent-wechat/token')
+  console.error('No token found. Set WECHATY_TOKEN or create ~/Project/Scripts/Docker/agent-wechat/token')
   process.exit(1)
 }
 

@@ -35,8 +35,16 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-TOKEN_DIR="$HOME/.config/agent-wechat"
-TOKEN_PATH="$TOKEN_DIR/token"
+if [ -n "${AGENT_WECHAT_TOKEN_FILE:-}" ]; then
+  TOKEN_PATH="$AGENT_WECHAT_TOKEN_FILE"
+else
+  if [ -n "${USERPROFILE:-}" ] && command -v cygpath >/dev/null 2>&1; then
+    TOKEN_PATH="$(cygpath "$USERPROFILE")/Project/Scripts/Docker/agent-wechat/token"
+  else
+    TOKEN_PATH="$HOME/Project/Scripts/Docker/agent-wechat/token"
+  fi
+fi
+TOKEN_DIR="$(dirname "$TOKEN_PATH")"
 if [ ! -f "$TOKEN_PATH" ]; then
   mkdir -p "$TOKEN_DIR"
   openssl rand -hex 32 > "$TOKEN_PATH"

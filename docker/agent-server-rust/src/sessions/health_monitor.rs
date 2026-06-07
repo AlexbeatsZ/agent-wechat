@@ -35,6 +35,13 @@ pub fn resume_monitoring() {
     MONITORING_PAUSED.store(false, Ordering::Relaxed);
 }
 
+fn kill_unresponsive_enabled() -> bool {
+    matches!(
+        std::env::var("AGENT_WECHAT_KILL_UNRESPONSIVE").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
+}
+
 /// Spawn WeChat process for the given session using the shared launch script.
 fn spawn_wechat(session: &crate::ia::types::Session) {
     // Use DBUS_SESSION_BUS_ADDRESS from our own environment (inherited from
@@ -54,9 +61,10 @@ fn spawn_wechat(session: &crate::ia::types::Session) {
 
 /// Spawn the background health monitor task.
 ///
-/// Every second, it checks the default session's WeChat process by running
-/// a11y → identify. If WeChat has crashed, it restarts it. If no IA state
-/// has been identified for more than 60 seconds, it kills and restarts it.
+/// Every second, it checks the default session's WeChat process. If WeChat has
+/// crashed, it restarts it. The legacy "kill if unidentified" behavior is
+/// opt-in with AGENT_WECHAT_KILL_UNRESPONSIVE=1 because a11y identification can
+/// fail while the app is still logged in and usable.
 pub fn spawn_health_monitor() {
     tokio::spawn(async move {
         tracing::info!("[health] WeChat health monitor started");
@@ -136,7 +144,11 @@ pub fn spawn_health_monitor() {
                 }
             };
 
-            // Run a11y + identify to see if we can detect any state
+            if !kill_unresponsive_enabled() {
+                continue;
+            }
+
+            // Optional legacy check: run a11y + identify to see if we can detect any state.
             let exec_options = ExecOptions {
                 session: Some(session.clone()),
                 timeout_ms: 10_000,
